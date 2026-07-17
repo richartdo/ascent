@@ -1,0 +1,41 @@
+import express from "express";
+import helmet from "helmet";
+import morgan from "morgan";
+
+import { corsMiddleware } from "./config/cors.js";
+import { env } from "./config/env.js";
+import { apiRateLimiter } from "./middleware/rateLimit.js";
+import { requestId } from "./middleware/requestId.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+import { notFound } from "./middleware/notFound.js";
+import { healthRouter } from "./routes/health.routes.js";
+
+export const createApp = () => {
+  const app = express();
+
+  app.disable("x-powered-by");
+  app.use(requestId);
+  app.use(helmet());
+  app.use(corsMiddleware);
+
+  morgan.token("request-id", (req) => req.id);
+  morgan.token("safe-path", (req) => req.originalUrl.split("?")[0]);
+  app.use(
+    morgan(
+      ":method :safe-path :status :res[content-length] - :response-time ms request_id=:request-id",
+      { skip: () => env.NODE_ENV === "test" },
+    ),
+  );
+
+  app.use(express.json({ limit: env.JSON_BODY_LIMIT }));
+  app.use(apiRateLimiter);
+
+  app.use("/api/v1", healthRouter);
+
+  app.use(notFound);
+  app.use(errorHandler);
+
+  return app;
+};
+
+export const app = createApp();
