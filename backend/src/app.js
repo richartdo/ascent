@@ -8,9 +8,12 @@ import { apiRateLimiter } from "./middleware/rateLimit.js";
 import { requestId } from "./middleware/requestId.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { notFound } from "./middleware/notFound.js";
+import { authenticate } from "./middleware/authenticate.js";
+import { createAuthRouter } from "./routes/auth.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
+import { createProfileRouter } from "./routes/profile.routes.js";
 
-export const createApp = () => {
+export const createApp = ({ authenticateMiddleware = authenticate } = {}) => {
   const app = express();
 
   app.disable("x-powered-by");
@@ -31,6 +34,8 @@ export const createApp = () => {
   app.use(apiRateLimiter);
 
   app.use("/api/v1", healthRouter);
+  app.use("/api/v1/auth", createAuthRouter(authenticateMiddleware));
+  app.use("/api/v1/profile", createProfileRouter(authenticateMiddleware));
 
   app.use(notFound);
   app.use(errorHandler);
