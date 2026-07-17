@@ -27,11 +27,12 @@ const getErrorDetails = (error) => {
   };
 };
 
-export const errorHandler = (error, req, res, _next) => {
+export const createErrorHandler = ({ nodeEnv = env.NODE_ENV, logger = console.error } = {}) =>
+  (error, req, res, _next) => {
   const { status, code, message } = getErrorDetails(error);
 
-  if (status >= 500 && env.NODE_ENV !== "test") {
-    console.error(`request_id=${req.id} code=${code} message=${error.message}`);
+  if (status >= 500 && nodeEnv !== "test") {
+    logger(`request_id=${req.id} status=${status} code=${code}`);
   }
 
   const responseError = {
@@ -46,3 +47,5 @@ export const errorHandler = (error, req, res, _next) => {
 
   res.status(status).json({ error: responseError });
 };
+
+export const errorHandler = createErrorHandler();

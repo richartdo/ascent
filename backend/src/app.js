@@ -25,10 +25,12 @@ export const createApp = ({
   aiService = createAiService({ provider: unavailableAiProvider }),
   aiRateLimiters,
   aiAvailability,
+  trustProxy = env.VERCEL ? 1 : false,
 } = {}) => {
   const app = express();
 
   app.disable("x-powered-by");
+  if (trustProxy) app.set("trust proxy", trustProxy);
   app.use(requestId);
   app.use(helmet());
   app.use(corsMiddleware);
@@ -66,3 +68,4 @@ export const createApp = ({
 };
 
 export const app = createApp();
+export default app;
