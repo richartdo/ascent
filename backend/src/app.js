@@ -12,6 +12,8 @@ import { authenticate } from "./middleware/authenticate.js";
 import { createAuthRouter } from "./routes/auth.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { createProfileRouter } from "./routes/profile.routes.js";
+import { createOpportunityRouter } from "./routes/opportunity.routes.js";
+import { createSavedOpportunityRouter } from "./routes/savedOpportunity.routes.js";
 
 export const createApp = ({ authenticateMiddleware = authenticate } = {}) => {
   const app = express();
@@ -36,6 +38,8 @@ export const createApp = ({ authenticateMiddleware = authenticate } = {}) => {
   app.use("/api/v1", healthRouter);
   app.use("/api/v1/auth", createAuthRouter(authenticateMiddleware));
   app.use("/api/v1/profile", createProfileRouter(authenticateMiddleware));
+  app.use("/api/v1/opportunities", createOpportunityRouter(authenticateMiddleware));
+  app.use("/api/v1/saved-opportunities", createSavedOpportunityRouter(authenticateMiddleware));
 
   app.use(notFound);
   app.use(errorHandler);
