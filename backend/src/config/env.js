@@ -9,6 +9,10 @@ const envSchema = z.object({
   CORS_ORIGINS: z.string().default("http://localhost:3000"),
   SUPABASE_URL: z.string().url().or(z.literal("")).optional(),
   SUPABASE_PUBLISHABLE_KEY: z.string().optional(),
+  AI_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().min(1).default("gpt-5.6"),
   JSON_BODY_LIMIT: z.string().regex(bodyLimitPattern).default("100kb"),
