@@ -16,8 +16,16 @@ import { createOpportunityRouter } from "./routes/opportunity.routes.js";
 import { createSavedOpportunityRouter } from "./routes/savedOpportunity.routes.js";
 import { createApplicationRouter } from "./routes/application.routes.js";
 import { createNotificationRouter } from "./routes/notification.routes.js";
+import { createAiRouter } from "./routes/ai.routes.js";
+import { createAiService } from "./services/ai/ai.service.js";
+import { unavailableAiProvider } from "./services/ai/provider.js";
 
-export const createApp = ({ authenticateMiddleware = authenticate } = {}) => {
+export const createApp = ({
+  authenticateMiddleware = authenticate,
+  aiService = createAiService({ provider: unavailableAiProvider }),
+  aiRateLimiters,
+  aiAvailability,
+} = {}) => {
   const app = express();
 
   app.disable("x-powered-by");
@@ -44,6 +52,12 @@ export const createApp = ({ authenticateMiddleware = authenticate } = {}) => {
   app.use("/api/v1/saved-opportunities", createSavedOpportunityRouter(authenticateMiddleware));
   app.use("/api/v1/applications", createApplicationRouter(authenticateMiddleware));
   app.use("/api/v1/notifications", createNotificationRouter(authenticateMiddleware));
+  app.use("/api/v1/ai", createAiRouter({
+    authenticate: authenticateMiddleware,
+    aiService,
+    rateLimiters: aiRateLimiters,
+    availability: aiAvailability,
+  }));
 
   app.use(notFound);
   app.use(errorHandler);
