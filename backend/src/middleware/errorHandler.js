@@ -34,11 +34,15 @@ export const errorHandler = (error, req, res, _next) => {
     console.error(`request_id=${req.id} code=${code} message=${error.message}`);
   }
 
-  res.status(status).json({
-    error: {
-      code,
-      message,
-      requestId: req.id,
-    },
-  });
+  const responseError = {
+    code,
+    message,
+    requestId: req.id,
+  };
+
+  if (status < 500 && error.details) {
+    responseError.details = error.details;
+  }
+
+  res.status(status).json({ error: responseError });
 };
