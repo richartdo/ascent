@@ -2,11 +2,7 @@ import cors from "cors";
 
 import { env } from "./env.js";
 
-const allowedOrigins = new Set(
-  env.CORS_ORIGINS.split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean),
-);
+const allowedOrigins = new Set(env.CORS_ORIGINS);
 
 export const corsMiddleware = cors({
   origin(origin, callback) {
