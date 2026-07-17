@@ -90,7 +90,6 @@ export const getOpportunity = async ({ supabase, opportunityId }) => {
   const { data, error } = await supabase
     .from("opportunities")
     .select(detailColumns)
-    .eq("status", "published")
     .eq("id", opportunityId)
     .maybeSingle();
 
