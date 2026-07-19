@@ -1,0 +1,29 @@
+import { env } from "../config/env.js";
+
+export const createRequireAiConfigured = ({
+  enabled = env.AI_ENABLED,
+  aiService,
+  feature,
+} = {}) => (req, res, next) => {
+  if (!enabled || aiService?.supports?.(feature) !== true) {
+    res.status(503).json({
+      error: {
+        code: "AI_NOT_CONFIGURED",
+        message: "AI features are temporarily unavailable.",
+        requestId: req.id,
+      },
+    });
+    return;
+  }
+  next();
+};
+
+export const deferredAiFeature = (req, res) => {
+  res.status(503).json({
+    error: {
+      code: "AI_NOT_CONFIGURED",
+      message: "AI features are temporarily unavailable.",
+      requestId: req.id,
+    },
+  });
+};

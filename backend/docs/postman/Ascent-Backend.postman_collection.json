@@ -1,0 +1,66 @@
+{
+  "info": {
+    "_postman_id": "00000000-0000-4000-8000-000000000002",
+    "name": "Ascent Backend",
+    "description": "All implemented Ascent API operations. Browsers and frontend code call Express only—never FastAPI or Ollama. Set accessToken from a test Supabase user and never save real credentials in this file.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+  "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+    "pm.test('JSON response', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/json'));",
+    "pm.test('Expected envelope', () => { const json = pm.response.json(); pm.expect(json).to.satisfy(v => Boolean(v.data || v.error)); });",
+    "pm.test('Request ID on errors or metadata', () => { const json = pm.response.json(); if (json.error) pm.expect(json.error.requestId).to.be.a('string'); });"
+  ] } }],
+  "item": [
+    { "name": "Platform", "item": [
+      { "name": "Health check", "auth": { "type": "noauth" }, "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('Health is 200', () => pm.response.to.have.status(200));"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/health" } }
+    ] },
+    { "name": "Authentication", "item": [
+      { "name": "Authentication context", "request": { "method": "GET", "url": "{{baseUrl}}/auth/me" } }
+    ] },
+    { "name": "Profile", "item": [
+      { "name": "Get profile", "request": { "method": "GET", "url": "{{baseUrl}}/profile" } },
+      { "name": "Update profile", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"persona\": \"student\",\n  \"fullName\": \"Test User\",\n  \"educationLevel\": \"undergraduate\",\n  \"skills\": [\"JavaScript\"],\n  \"interests\": [\"technology\"],\n  \"preferredOpportunityTypes\": [\"internship\"]\n}" }, "url": "{{baseUrl}}/profile" } }
+    ] },
+    { "name": "Opportunities", "item": [
+      { "name": "List opportunities", "request": { "method": "GET", "url": "{{baseUrl}}/opportunities?page=1&limit=20&sort=deadline_asc" } },
+      { "name": "View opportunity", "request": { "method": "GET", "url": "{{baseUrl}}/opportunities/{{opportunityId}}" } }
+    ] },
+    { "name": "Saved opportunities", "item": [
+      { "name": "List saved opportunities", "request": { "method": "GET", "url": "{{baseUrl}}/saved-opportunities?page=1&limit=20" } },
+      { "name": "Save opportunity", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"notes\": \"Review application requirements\"\n}" }, "url": "{{baseUrl}}/saved-opportunities/{{opportunityId}}" } },
+      { "name": "Update saved opportunity", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"notes\": \"Prepare documents\"\n}" }, "url": "{{baseUrl}}/saved-opportunities/{{opportunityId}}" } },
+      { "name": "Delete saved opportunity", "request": { "method": "DELETE", "url": "{{baseUrl}}/saved-opportunities/{{opportunityId}}" } }
+    ] },
+    { "name": "Applications", "item": [
+      { "name": "List applications", "request": { "method": "GET", "url": "{{baseUrl}}/applications?page=1&limit=20" } },
+      { "name": "Create application", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"opportunityId\": \"{{opportunityId}}\",\n  \"status\": \"planning\",\n  \"nextStep\": \"Review eligibility\"\n}" }, "url": "{{baseUrl}}/applications" } },
+      { "name": "Get application", "request": { "method": "GET", "url": "{{baseUrl}}/applications/{{applicationId}}" } },
+      { "name": "Update application", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"status\": \"preparing\",\n  \"nextStep\": \"Collect references\"\n}" }, "url": "{{baseUrl}}/applications/{{applicationId}}" } },
+      { "name": "Delete application", "request": { "method": "DELETE", "url": "{{baseUrl}}/applications/{{applicationId}}" } },
+      { "name": "Update checklist", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"checklist\": [{\n    \"id\": \"00000000-0000-4000-8000-000000000010\",\n    \"title\": \"Prepare CV\",\n    \"completed\": false,\n    \"completedAt\": null\n  }]\n}" }, "url": "{{baseUrl}}/applications/{{applicationId}}/checklist" } }
+    ] },
+    { "name": "Notifications", "item": [
+      { "name": "List notifications", "request": { "method": "GET", "url": "{{baseUrl}}/notifications?page=1&limit=20" } },
+      { "name": "Unread count", "request": { "method": "GET", "url": "{{baseUrl}}/notifications/unread-count" } },
+      { "name": "Read notification", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/notifications/{{notificationId}}/read" } },
+      { "name": "Dismiss notification", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/notifications/{{notificationId}}/dismiss" } },
+      { "name": "Read all notifications", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/notifications/read-all" } }
+    ] },
+    { "name": "Approved AI capabilities through Express", "description": "These are the only four approved public AI capabilities. They require both Express and model-service feature allowlists. Generated output requires human review.", "item": [
+      { "name": "Opportunity matching", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"limit\": 10\n}" }, "url": "{{baseUrl}}/ai/opportunity-matches" } },
+      { "name": "Opportunity summary", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/summary" } },
+      { "name": "Readiness assessment", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/readiness" } },
+      { "name": "General CV analysis", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"cvText\": \"Fictional candidate completed a class project using JavaScript.\"\n}" }, "url": "{{baseUrl}}/ai/cv-analysis" } },
+      { "name": "Opportunity-specific CV analysis", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"cvText\": \"Fictional candidate completed a class project using JavaScript.\",\n  \"opportunityId\": \"{{opportunityId}}\"\n}" }, "url": "{{baseUrl}}/ai/cv-analysis" } }
+    ] },
+    { "name": "Deferred AI capabilities", "description": "Valid requests always return 503 AI_NOT_CONFIGURED and never call FastAPI or Ollama.", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('AI feature is deferred', () => pm.response.to.have.status(503));", "pm.test('AI_NOT_CONFIGURED returned', () => pm.expect(pm.response.json().error.code).to.eql('AI_NOT_CONFIGURED'));" ] } }], "item": [
+      { "name": "Cover letter", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"tone\": \"professional\"\n}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/cover-letter" } },
+      { "name": "Essay assistance", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"mode\": \"outline\",\n  \"prompt\": \"Outline a motivation essay.\"\n}" }, "url": "{{baseUrl}}/ai/essay-assistance" } }
+    ] },
+    { "name": "INTERNAL developer diagnostics — never use from frontend", "description": "Local diagnostics only. The model-service URL and key must never be placed in browser or frontend code.", "auth": { "type": "noauth" }, "item": [
+      { "name": "Internal model health", "request": { "method": "GET", "url": "{{modelServiceUrl}}/health" } },
+      { "name": "Internal model match fixture", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-Model-Service-Key", "value": "{{modelServiceApiKey}}", "type": "text" }], "body": { "mode": "raw", "raw": "{\n  \"combinedText\": \"Local diagnostic fixture only\",\n  \"profileCountry\": \"KE\",\n  \"education\": \"bachelors_in_progress\",\n  \"opportunityType\": \"fellowship\",\n  \"locationMode\": \"hybrid\",\n  \"countryEligible\": true,\n  \"educationCompatible\": true,\n  \"typePreferred\": true,\n  \"locationCompatible\": true,\n  \"skillOverlapCount\": 1,\n  \"missingRequiredSkillCount\": 0\n}" }, "url": "{{modelServiceUrl}}/v1/match" } }
+    ] }
+  ]
+}
