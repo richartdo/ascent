@@ -5,6 +5,7 @@ import { createApp } from "../src/app.js";
 import { createRequireAiConfigured } from "../src/middleware/aiAvailability.js";
 import { createAiRateLimiters } from "../src/middleware/aiRateLimit.js";
 import { createAiService } from "../src/services/ai/ai.service.js";
+import { AI_FEATURES, createConfiguredAiProvider } from "../src/services/ai/provider.js";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const opportunityId = "10000000-0000-4000-8000-000000000001";
@@ -30,6 +31,35 @@ const buildApp = (options = {}) => createApp({
 });
 
 describe("AI route foundation", () => {
+  it.each([
+    [false, "disabled"],
+    [false, "custom"],
+    [true, "disabled"],
+  ])("keeps every feature unavailable when enabled=%s provider=%s", (enabled, providerName) => {
+    const provider = createConfiguredAiProvider({ configuration: {
+      AI_ENABLED: enabled,
+      AI_PROVIDER: providerName,
+      MODEL_SERVICE_URL: "http://127.0.0.1:8000",
+      MODEL_SERVICE_API_KEY: "",
+      MODEL_SERVICE_TIMEOUT_MS: 3000,
+    } });
+    for (const feature of Object.values(AI_FEATURES)) expect(provider.supports(feature)).toBe(false);
+  });
+
+  it("custom provider supports only opportunity matching", () => {
+    const provider = createConfiguredAiProvider({ configuration: {
+      AI_ENABLED: true,
+      AI_PROVIDER: "custom",
+      MODEL_SERVICE_URL: "http://127.0.0.1:8000",
+      MODEL_SERVICE_API_KEY: "",
+      MODEL_SERVICE_TIMEOUT_MS: 3000,
+    }, fetchImpl: vi.fn() });
+    expect(provider.supports(AI_FEATURES.MATCHING)).toBe(true);
+    for (const feature of Object.values(AI_FEATURES).filter((value) => value !== AI_FEATURES.MATCHING)) {
+      expect(provider.supports(feature)).toBe(false);
+    }
+  });
+
   it("requires authentication before reporting disabled AI", async () => {
     const response = await request(buildApp())
       .post("/api/v1/ai/opportunity-matches")

@@ -18,13 +18,14 @@ import { createApplicationRouter } from "./routes/application.routes.js";
 import { createNotificationRouter } from "./routes/notification.routes.js";
 import { createAiRouter } from "./routes/ai.routes.js";
 import { createAiService } from "./services/ai/ai.service.js";
-import { unavailableAiProvider } from "./services/ai/provider.js";
+import { createConfiguredAiProvider } from "./services/ai/provider.js";
 
 export const createApp = ({
   authenticateMiddleware = authenticate,
-  aiService = createAiService({ provider: unavailableAiProvider }),
+  aiService = createAiService({ provider: createConfiguredAiProvider() }),
   aiRateLimiters,
   aiAvailability,
+  aiEnabled = env.AI_ENABLED,
   trustProxy = env.VERCEL ? 1 : false,
 } = {}) => {
   const app = express();
@@ -59,6 +60,7 @@ export const createApp = ({
     aiService,
     rateLimiters: aiRateLimiters,
     availability: aiAvailability,
+    enabled: aiEnabled,
   }));
 
   app.use(notFound);

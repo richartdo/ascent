@@ -21,7 +21,7 @@ const getErrorDetails = (error) => {
     status: error.statusCode ?? error.status ?? 500,
     code: error.code ?? "INTERNAL_ERROR",
     message:
-      (error.statusCode ?? error.status) && (error.statusCode ?? error.status) < 500
+      ((error.statusCode ?? error.status) && (error.statusCode ?? error.status) < 500) || error.expose === true
         ? error.message
         : "An unexpected error occurred.",
   };

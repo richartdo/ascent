@@ -57,4 +57,60 @@ describe("environment hardening", () => {
     expect(() => parseEnvironment({ ...base, CORS_ORIGINS: secretLikeValue }))
       .toThrow(expect.not.stringContaining(secretLikeValue));
   });
+
+  it("parses the custom matching provider without requiring OpenAI or a development key", () => {
+    const parsed = parseEnvironment({
+      ...base,
+      AI_ENABLED: "true",
+      AI_PROVIDER: "custom",
+      MODEL_SERVICE_URL: "http://127.0.0.1:8000",
+      MODEL_SERVICE_API_KEY: "",
+      OPENAI_API_KEY: "",
+    });
+    expect(parsed).toMatchObject({
+      AI_ENABLED: true,
+      AI_PROVIDER: "custom",
+      MODEL_SERVICE_TIMEOUT_MS: 3000,
+      MODEL_SERVICE_MAX_CANDIDATES: 20,
+      MODEL_SERVICE_CONCURRENCY: 4,
+      OPENAI_API_KEY: "",
+    });
+  });
+
+  it.each([
+    { MODEL_SERVICE_URL: "" },
+    { MODEL_SERVICE_URL: "http://example.com:8000" },
+    { MODEL_SERVICE_URL: "https://user:secret@example.com" },
+    { MODEL_SERVICE_URL: "https://example.com/path" },
+    { MODEL_SERVICE_URL: "https://example.com?secret=value" },
+    { MODEL_SERVICE_URL: "https://example.com#fragment" },
+    { MODEL_SERVICE_TIMEOUT_MS: "499" },
+    { MODEL_SERVICE_TIMEOUT_MS: "10001" },
+    { MODEL_SERVICE_MAX_CANDIDATES: "0" },
+    { MODEL_SERVICE_MAX_CANDIDATES: "21" },
+    { MODEL_SERVICE_CONCURRENCY: "0" },
+    { MODEL_SERVICE_CONCURRENCY: "6" },
+  ])("rejects invalid custom-provider settings without exposing values", (override) => {
+    const secret = "submitted-secret-value";
+    expect(() => parseEnvironment({
+      ...base, AI_ENABLED: "true", AI_PROVIDER: "custom", MODEL_SERVICE_API_KEY: secret, ...override,
+    })).toThrow(expect.not.stringContaining(secret));
+  });
+
+  it("requires an internal key for production custom matching", () => {
+    const production = {
+      ...base,
+      NODE_ENV: "production",
+      CORS_ORIGINS: "https://app.example.com",
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_PUBLISHABLE_KEY: "publishable-placeholder",
+      AI_ENABLED: "true",
+      AI_PROVIDER: "custom",
+      MODEL_SERVICE_URL: "https://model.internal.example.com",
+      MODEL_SERVICE_API_KEY: "",
+      OPENAI_API_KEY: "",
+    };
+    expect(() => parseEnvironment(production)).toThrow(/MODEL_SERVICE_API_KEY/);
+    expect(parseEnvironment({ ...production, MODEL_SERVICE_API_KEY: "internal-placeholder" }).OPENAI_API_KEY).toBe("");
+  });
 });

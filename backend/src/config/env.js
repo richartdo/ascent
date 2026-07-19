@@ -41,6 +41,22 @@ const corsOriginsSchema = trimmedString()
     return [...new Set(origins)];
   });
 
+const modelServiceOriginSchema = trimmedString(z.string().min(1))
+  .default("http://127.0.0.1:8000")
+  .superRefine((value, context) => {
+    try {
+      const parsed = new URL(value);
+      const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(parsed.hostname);
+      if (!["http:", "https:"].includes(parsed.protocol) || parsed.origin !== value) throw new Error();
+      if (parsed.protocol === "http:" && !loopback) throw new Error();
+    } catch {
+      context.addIssue({
+        code: "custom",
+        message: "Must be an exact HTTPS origin or an HTTP loopback origin.",
+      });
+    }
+  });
+
 const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(5000),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -51,16 +67,29 @@ const envSchema = z.object({
   ),
   SUPABASE_PUBLISHABLE_KEY: optionalTrimmedString,
   AI_ENABLED: booleanString(),
+  AI_PROVIDER: trimmedString(z.enum(["disabled", "custom"])).default("disabled"),
+  MODEL_SERVICE_URL: modelServiceOriginSchema,
+  MODEL_SERVICE_API_KEY: optionalTrimmedString,
+  MODEL_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(500).max(10_000).default(3000),
+  MODEL_SERVICE_MAX_CANDIDATES: z.coerce.number().int().min(1).max(20).default(20),
+  MODEL_SERVICE_CONCURRENCY: z.coerce.number().int().min(1).max(5).default(4),
   OPENAI_API_KEY: optionalTrimmedString,
   OPENAI_MODEL: trimmedString(z.string().min(1)).default("gpt-5.6"),
   JSON_BODY_LIMIT: trimmedString(z.string().regex(bodyLimitPattern)).default("100kb"),
   AI_TEXT_MAX_LENGTH: z.coerce.number().int().positive().default(30000),
   VERCEL: platformBoolean,
 }).superRefine((value, context) => {
-  if (value.NODE_ENV !== "production") return;
-  if (!value.SUPABASE_URL) context.addIssue({ code: "custom", path: ["SUPABASE_URL"], message: "Required in production." });
-  if (!value.SUPABASE_PUBLISHABLE_KEY) context.addIssue({ code: "custom", path: ["SUPABASE_PUBLISHABLE_KEY"], message: "Required in production." });
-  if (value.CORS_ORIGINS.includes("*")) context.addIssue({ code: "custom", path: ["CORS_ORIGINS"], message: "Wildcard origins are not allowed in production." });
+  if (value.NODE_ENV === "production") {
+    if (!value.SUPABASE_URL) context.addIssue({ code: "custom", path: ["SUPABASE_URL"], message: "Required in production." });
+    if (!value.SUPABASE_PUBLISHABLE_KEY) context.addIssue({ code: "custom", path: ["SUPABASE_PUBLISHABLE_KEY"], message: "Required in production." });
+    if (value.CORS_ORIGINS.includes("*")) context.addIssue({ code: "custom", path: ["CORS_ORIGINS"], message: "Wildcard origins are not allowed in production." });
+  }
+  if (value.AI_ENABLED && value.AI_PROVIDER === "custom") {
+    if (!value.MODEL_SERVICE_URL) context.addIssue({ code: "custom", path: ["MODEL_SERVICE_URL"], message: "Required for custom matching." });
+    if (value.NODE_ENV === "production" && !value.MODEL_SERVICE_API_KEY) {
+      context.addIssue({ code: "custom", path: ["MODEL_SERVICE_API_KEY"], message: "Required in production for custom matching." });
+    }
+  }
 });
 
 export const parseEnvironment = (source) => {

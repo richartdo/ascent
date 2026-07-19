@@ -12,18 +12,19 @@ import {
   essayAssistanceRequestSchema,
   opportunityMatchesRequestSchema,
 } from "../schemas/ai.schema.js";
+import { AI_FEATURES } from "../services/ai/provider.js";
 
-export const createAiRouter = ({ authenticate, aiService, rateLimiters = createAiRateLimiters(), availability } = {}) => {
+export const createAiRouter = ({ authenticate, aiService, rateLimiters = createAiRateLimiters(), availability, enabled } = {}) => {
   const router = Router();
   const controller = createAiController(aiService);
-  const requireAi = availability ?? createRequireAiConfigured({ aiService });
+  const requireFeature = (feature) => availability ?? createRequireAiConfigured({ aiService, feature, enabled });
   const protectedRoute = [authenticate, ...rateLimiters];
 
-  router.post("/opportunity-matches", ...protectedRoute, validateBody(opportunityMatchesRequestSchema), requireAi, controller.matchOpportunities);
-  router.post("/opportunities/:opportunityId/summary", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(emptyAiRequestSchema), requireAi, controller.summarizeOpportunity);
-  router.post("/opportunities/:opportunityId/readiness", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(emptyAiRequestSchema), requireAi, controller.assessReadiness);
-  router.post("/cv-analysis", ...protectedRoute, validateBody(cvAnalysisRequestSchema), requireAi, controller.analyzeCv);
-  router.post("/opportunities/:opportunityId/cover-letter", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(coverLetterRequestSchema), requireAi, controller.generateCoverLetter);
-  router.post("/essay-assistance", ...protectedRoute, validateBody(essayAssistanceRequestSchema), requireAi, controller.assistEssay);
+  router.post("/opportunity-matches", ...protectedRoute, validateBody(opportunityMatchesRequestSchema), requireFeature(AI_FEATURES.MATCHING), controller.matchOpportunities);
+  router.post("/opportunities/:opportunityId/summary", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(emptyAiRequestSchema), requireFeature(AI_FEATURES.SUMMARY), controller.summarizeOpportunity);
+  router.post("/opportunities/:opportunityId/readiness", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(emptyAiRequestSchema), requireFeature(AI_FEATURES.READINESS), controller.assessReadiness);
+  router.post("/cv-analysis", ...protectedRoute, validateBody(cvAnalysisRequestSchema), requireFeature(AI_FEATURES.CV), controller.analyzeCv);
+  router.post("/opportunities/:opportunityId/cover-letter", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(coverLetterRequestSchema), requireFeature(AI_FEATURES.COVER_LETTER), controller.generateCoverLetter);
+  router.post("/essay-assistance", ...protectedRoute, validateBody(essayAssistanceRequestSchema), requireFeature(AI_FEATURES.ESSAY), controller.assistEssay);
   return router;
 };

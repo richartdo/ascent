@@ -38,6 +38,12 @@ Errors use `{ "error": { "code", "message", "requestId", "details?" } }`. Preser
 
 Never replace an AI 503 with fabricated recommendations, summaries, CV feedback, letters, or essays.
 
+## Opportunity matching
+
+The frontend may call only `POST /ai/opportunity-matches` on the Express API with the user's bearer token and `{ "limit": 10 }`. Express loads the authenticated profile and verified opportunities, applies deterministic eligibility rules, and privately calls the Python model service. Never put the model-service URL or internal key in frontend code and never call FastAPI from a browser.
+
+Each `matchScore` is synthetic-baseline relevance guidance, not a probability of eligibility, acceptance, selection, or funding. Explicit deterministic eligibility remains authoritative. A `409 PROFILE_REQUIRED` may include `error.details.profileGaps` containing `countryCode` or `educationLevel`; direct the user to update those fields. Other AI endpoints remain unavailable.
+
 ## Opportunities
 
 `GET /opportunities` supports `q`, `type`, `country`, `isGlobal`, `locationMode`, `deadlineBefore`, `deadlineAfter`, `page`, `limit`, and `sort`. Normal discovery returns only published opportunities with a future deadline or verified rolling deadline. Details expose `deadline` and `isExpired` for tracked history.

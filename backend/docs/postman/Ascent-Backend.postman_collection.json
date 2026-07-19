@@ -47,13 +47,19 @@
       { "name": "Dismiss notification", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/notifications/{{notificationId}}/dismiss" } },
       { "name": "Read all notifications", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/notifications/read-all" } }
     ] },
-    { "name": "AI-ready (disabled)", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('AI is disabled', () => pm.response.to.have.status(503));", "pm.test('AI_NOT_CONFIGURED returned', () => pm.expect(pm.response.json().error.code).to.eql('AI_NOT_CONFIGURED'));" ] } }], "item": [
-      { "name": "Opportunity matches", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"limit\": 10\n}" }, "url": "{{baseUrl}}/ai/opportunity-matches" } },
+    { "name": "Custom opportunity matching", "description": "Frontend and API clients call Express only. Matching returns 200 when the private custom provider is enabled, otherwise AI_NOT_CONFIGURED.", "item": [
+      { "name": "Opportunity matches through Express", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"limit\": 10\n}" }, "url": "{{baseUrl}}/ai/opportunity-matches" } }
+    ] },
+    { "name": "Other AI features (disabled)", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('AI feature is disabled', () => pm.response.to.have.status(503));", "pm.test('AI_NOT_CONFIGURED returned', () => pm.expect(pm.response.json().error.code).to.eql('AI_NOT_CONFIGURED'));" ] } }], "item": [
       { "name": "Opportunity summary", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/summary" } },
       { "name": "Readiness assessment", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/readiness" } },
       { "name": "CV analysis", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"cvText\": \"Placeholder CV text for disabled-endpoint verification.\"\n}" }, "url": "{{baseUrl}}/ai/cv-analysis" } },
       { "name": "Cover letter", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"tone\": \"professional\"\n}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/cover-letter" } },
       { "name": "Essay assistance", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"mode\": \"outline\",\n  \"prompt\": \"Outline a motivation essay.\"\n}" }, "url": "{{baseUrl}}/ai/essay-assistance" } }
+    ] },
+    { "name": "INTERNAL developer diagnostics — never use from frontend", "description": "Local diagnostics only. The model-service URL and key must never be placed in browser or frontend code.", "auth": { "type": "noauth" }, "item": [
+      { "name": "Internal model health", "request": { "method": "GET", "url": "{{modelServiceUrl}}/health" } },
+      { "name": "Internal model match fixture", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-Model-Service-Key", "value": "{{modelServiceApiKey}}", "type": "text" }], "body": { "mode": "raw", "raw": "{\n  \"combinedText\": \"Local diagnostic fixture only\",\n  \"profileCountry\": \"KE\",\n  \"education\": \"bachelors_in_progress\",\n  \"opportunityType\": \"fellowship\",\n  \"locationMode\": \"hybrid\",\n  \"countryEligible\": true,\n  \"educationCompatible\": true,\n  \"typePreferred\": true,\n  \"locationCompatible\": true,\n  \"skillOverlapCount\": 1,\n  \"missingRequiredSkillCount\": 0\n}" }, "url": "{{modelServiceUrl}}/v1/match" } }
     ] }
   ]
 }

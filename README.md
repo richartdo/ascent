@@ -6,15 +6,16 @@ Many promising applicants discover scholarships, internships, grants, fellowship
 
 ## Current capabilities
 
-The backend currently provides Supabase authentication, profiles, active opportunity discovery, saved opportunities, application tracking, checklists, lazy in-app deadline notifications, and contracts for future AI assistance. AI routes are intentionally disabled and return `AI_NOT_CONFIGURED`; no live OpenAI calls or fabricated results are used.
+The backend provides Supabase authentication, profiles, active opportunity discovery, saved opportunities, application tracking, checklists, lazy notifications, and optional custom opportunity matching through a private Python synthetic-baseline service. Other AI routes remain disabled; no OpenAI calls or fabricated results are used.
 
 ## Repository structure
 
 ```text
 ascent/
-├── backend/   Express API, tests, Supabase migrations and backend documentation
-├── frontend/  Frontend workspace placeholder; implementation is incomplete
-├── docs/      Project requirements and research documents
+├── backend/        Express API, tests, Supabase migrations and backend documentation
+├── model-service/  Private FastAPI/scikit-learn opportunity matcher
+├── frontend/       Frontend workspace placeholder; implementation is incomplete
+├── docs/           Project requirements and research documents
 ├── LICENSE
 └── README.md
 ```
@@ -43,7 +44,7 @@ The backend is implementation-ready for local and UAT verification. Deployment p
 - Zod validation
 - Helmet, CORS, Morgan, and express-rate-limit
 - Vitest and Supertest
-- OpenAI-ready provider architecture with no live adapter
+- Provider-neutral AI architecture with private custom matching and no OpenAI calls
 - Vercel as the future deployment target
 
 ## Prerequisites
@@ -101,6 +102,12 @@ CORS_ORIGINS=http://localhost:3000
 SUPABASE_URL=
 SUPABASE_PUBLISHABLE_KEY=
 AI_ENABLED=false
+AI_PROVIDER=disabled
+MODEL_SERVICE_URL=http://127.0.0.1:8000
+MODEL_SERVICE_API_KEY=
+MODEL_SERVICE_TIMEOUT_MS=3000
+MODEL_SERVICE_MAX_CANDIDATES=20
+MODEL_SERVICE_CONCURRENCY=4
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.6
 AI_TEXT_MAX_LENGTH=30000
@@ -114,7 +121,9 @@ JSON_BODY_LIMIT=100kb
 | `CORS_ORIGINS` | Comma-separated exact HTTP(S) frontend origins, without paths or wildcards. |
 | `SUPABASE_URL` | Project URL from Supabase Dashboard → Project Settings/API. |
 | `SUPABASE_PUBLISHABLE_KEY` | Browser-safe publishable/anon project key. |
-| `AI_ENABLED` | Must remain `false` until the live AI adapter is reviewed. |
+| `AI_ENABLED` | Safe default `false`; local custom matching requires an untracked `true` override. |
+| `AI_PROVIDER` | Safe default `disabled`; set `custom` only when the private model service is running. |
+| `MODEL_SERVICE_*` | Backend-only model origin, blank local key, timeout, candidate cap, and concurrency settings. Never expose them to frontend code. |
 | `OPENAI_API_KEY` | Optional and intentionally empty while AI is disabled. |
 | `OPENAI_MODEL` | Model reserved for the future live adapter. |
 | `AI_TEXT_MAX_LENGTH` | Maximum accepted AI text-input length. |
@@ -363,7 +372,7 @@ All paths below are relative to `/api/v1`.
 | PATCH | `/notifications/{notificationId}/read` | Yes | Mark notification read |
 | PATCH | `/notifications/{notificationId}/dismiss` | Yes | Dismiss notification |
 | POST | `/notifications/read-all` | Yes | Read all non-dismissed notifications |
-| POST | `/ai/opportunity-matches` | Yes | Disabled matching contract |
+| POST | `/ai/opportunity-matches` | Yes | Optional custom synthetic-baseline matching |
 | POST | `/ai/opportunities/{opportunityId}/summary` | Yes | Disabled summary contract |
 | POST | `/ai/opportunities/{opportunityId}/readiness` | Yes | Disabled readiness contract |
 | POST | `/ai/cv-analysis` | Yes | Disabled CV-analysis contract |
@@ -416,9 +425,9 @@ backend/
 
 There is currently no `utils` directory; reusable behavior is kept in the closest config, middleware, schema, or service module.
 
-## AI-disabled behavior
+## AI capability behavior
 
-AI is fail-closed. A valid authenticated AI request returns HTTP 503 whenever AI is disabled, the key is absent, or no live adapter exists. The frontend should disable or label AI controls after `AI_NOT_CONFIGURED`. It must never display fake recommendations, summaries, CV analysis, cover letters, or essays.
+AI is fail-closed by default. With `AI_ENABLED=true` and `AI_PROVIDER=custom`, only opportunity matching is enabled; summaries, readiness, CV analysis, cover letters, and essays still return `AI_NOT_CONFIGURED`. The frontend calls Express only. The Python service and its internal key are never browser configuration. Match scores are synthetic relevance guidance, never outcome probabilities.
 
 ## Troubleshooting
 

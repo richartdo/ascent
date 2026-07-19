@@ -41,22 +41,35 @@ describe("OpenAPI and API-client assets", () => {
     const document = await loadJson("../docs/openapi.json");
     for (const [method, path] of registeredOperations.filter(([, path]) => path.includes("/ai/"))) {
       const operation = resolveOperation(document, method, path);
-      expect(operation.responses["503"].$ref).toBe("#/components/responses/AiNotConfigured");
+      expect(operation.responses["503"].$ref).toBe(path.endsWith("opportunity-matches")
+        ? "#/components/responses/AiMatchingUnavailable"
+        : "#/components/responses/AiNotConfigured");
     }
     expect(document.components.responses.AiNotConfigured.content["application/json"].example.error.code)
       .toBe("AI_NOT_CONFIGURED");
+  });
+
+  it("documents matching success and sanitized model dependency failures", async () => {
+    const document = await loadJson("../docs/openapi.json");
+    const operation = resolveOperation(document, "post", "/api/v1/ai/opportunity-matches");
+    expect(operation.responses["200"]).toBeDefined();
+    expect(operation.responses["502"].$ref).toBe("#/components/responses/AiMalformedResponse");
+    expect(operation.responses["504"].$ref).toBe("#/components/responses/AiTimeout");
+    expect(document.components.schemas.AiMatchesResponse.properties.data.properties.matches.items.$ref)
+      .toBe("#/components/schemas/MatchingResult");
   });
 
   it("parses safe Postman assets containing all implemented operations", async () => {
     const collection = await loadJson("../docs/postman/Ascent-Backend.postman_collection.json");
     const environment = await loadJson("../docs/postman/Ascent-Local.postman_environment.json");
     const requests = collection.item.flatMap((folder) => folder.item);
-    expect(requests).toHaveLength(27);
+    expect(requests).toHaveLength(29);
     expect(environment.values.map(({ key }) => key)).toEqual([
       "baseUrl", "accessToken", "opportunityId", "applicationId", "notificationId",
-      "supabaseUrl", "supabasePublishableKey",
+      "supabaseUrl", "supabasePublishableKey", "modelServiceUrl", "modelServiceApiKey",
     ]);
     expect(environment.values.find(({ key }) => key === "accessToken").value).toBe("");
+    expect(environment.values.find(({ key }) => key === "modelServiceApiKey")).toMatchObject({ value: "", type: "secret" });
     expect(JSON.stringify({ collection, environment })).not.toMatch(/sk-[A-Za-z0-9]|service[_-]?role|database password/i);
   });
 });
