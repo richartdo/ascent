@@ -94,7 +94,7 @@ class RequestSafetyMiddleware:
                     if name.lower() not in {b"x-request-id", b"cache-control"}
                 ]
                 response_headers.append((b"x-request-id", request_id.encode("ascii")))
-                if route == "/v1/match":
+                if route == "/v1/match" or route.startswith("/v1/generate/"):
                     response_headers.append((b"cache-control", b"no-store"))
                 message["headers"] = response_headers
             await send(message)
