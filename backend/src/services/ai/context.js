@@ -1,15 +1,16 @@
 import { getOpportunity } from "../opportunity.service.js";
 import { getProfile } from "../profile.service.js";
-import { requireUsableProfile } from "./profileReadiness.js";
+import { requireUsableMatchingProfile, requireUsableProfile } from "./profileReadiness.js";
 
 const candidateColumns = `
-  id, title, type, description, requirements, eligibility, country_codes,
+  id, title, organization, type, description, requirements, eligibility, country_codes,
   is_global, location, location_mode, deadline, status
 `;
 
 const mapCandidate = (row) => ({
   id: row.id,
   title: row.title,
+  organization: row.organization,
   type: row.type,
   description: row.description,
   requirements: row.requirements,
@@ -28,13 +29,15 @@ export const loadOpportunityContext = ({ supabase, opportunityId }) =>
 export const loadUsableProfile = async ({ supabase, userId }) =>
   requireUsableProfile(await getProfile({ supabase, userId }));
 
+export const loadUsableMatchingProfile = async ({ supabase, userId, now }) =>
+  requireUsableMatchingProfile(await getProfile({ supabase, userId }), now);
+
 export const loadMatchingCandidates = async ({ supabase, now = new Date() }) => {
   const { data, error } = await supabase
     .from("opportunities")
     .select(candidateColumns)
     .eq("status", "published")
-    .or(`deadline.is.null,deadline.gt.${now.toISOString()}`)
-    .limit(100);
+    .or(`deadline.is.null,deadline.gt.${now.toISOString()}`);
 
   if (error) {
     throw Object.assign(new Error("An opportunity database operation failed."), {

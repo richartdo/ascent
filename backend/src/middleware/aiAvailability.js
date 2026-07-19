@@ -2,10 +2,10 @@ import { env } from "../config/env.js";
 
 export const createRequireAiConfigured = ({
   enabled = env.AI_ENABLED,
-  apiKey = env.OPENAI_API_KEY,
   aiService,
+  feature,
 } = {}) => (req, res, next) => {
-  if (!enabled || !apiKey?.trim() || aiService?.configured !== true) {
+  if (!enabled || aiService?.supports?.(feature) !== true) {
     res.status(503).json({
       error: {
         code: "AI_NOT_CONFIGURED",

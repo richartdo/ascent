@@ -2,6 +2,11 @@ const normalize = (value) => value.trim().toLocaleLowerCase("en");
 const normalizedSet = (values = []) => new Set(values.map(normalize));
 
 const educationLevels = ["secondary", "undergraduate", "graduate", "postgraduate", "other"];
+const modelOpportunityTypes = new Set([
+  "accelerator", "competition", "fellowship", "grant", "hackathon",
+  "internship", "scholarship", "training",
+]);
+const modelLocationModes = new Set(["remote", "hybrid", "onsite"]);
 
 const explicitEducationLevels = (eligibility) => {
   const levels = eligibility?.educationLevels;
@@ -42,6 +47,16 @@ const isAvailableInProfileCountry = (profile, opportunity) => {
   return opportunity.countryCodes?.includes(profile.countryCode) ?? false;
 };
 
+const locationCompatibility = (profile, opportunity) => {
+  if (profile.remotePreference === "remote_only") return opportunity.locationMode === "remote";
+  if (profile.remotePreference === "remote_preferred" && opportunity.locationMode === "remote") return true;
+  if ((profile.preferredLocations ?? []).length === 0) return true;
+  return locationRelevance(profile, opportunity) === 1 || opportunity.locationMode === "remote";
+};
+
+const modelCompatible = (opportunity) =>
+  modelOpportunityTypes.has(opportunity.type) && modelLocationModes.has(opportunity.locationMode);
+
 export const prefilterOpportunities = ({ profile, opportunities, now = new Date(), limit = 25 }) => {
   const preferredTypes = new Set(profile.preferredOpportunityTypes ?? []);
 
@@ -53,8 +68,20 @@ export const prefilterOpportunities = ({ profile, opportunities, now = new Date(
       const levels = explicitEducationLevels(opportunity.eligibility);
       return levels === null || levels.has(profile.educationLevel);
     })
+    .filter((opportunity) => profile.remotePreference !== "remote_only" || opportunity.locationMode === "remote")
+    .filter(modelCompatible)
     .map((opportunity) => ({
       opportunity,
+      assessment: {
+        countryEligible: true,
+        countryReason: opportunity.isGlobal
+          ? "The opportunity is marked as globally available."
+          : "The opportunity is available in the profile country location.",
+        educationCompatible: true,
+        educationKnown: explicitEducationLevels(opportunity.eligibility) !== null,
+        typePreferred: preferredTypes.size === 0 || preferredTypes.has(opportunity.type),
+        locationCompatible: locationCompatibility(profile, opportunity),
+      },
       relevance: {
         skillOverlap: overlap(profile.skills, opportunity),
         interestOverlap: overlap(profile.interests, opportunity),
@@ -66,9 +93,7 @@ export const prefilterOpportunities = ({ profile, opportunities, now = new Date(
       const leftTotal = Object.values(left.relevance).reduce((sum, value) => sum + value, 0);
       const rightTotal = Object.values(right.relevance).reduce((sum, value) => sum + value, 0);
       if (leftTotal !== rightTotal) return rightTotal - leftTotal;
-      const leftDeadline = left.opportunity.deadline ?? "9999-12-31";
-      const rightDeadline = right.opportunity.deadline ?? "9999-12-31";
-      return leftDeadline.localeCompare(rightDeadline) || left.opportunity.id.localeCompare(right.opportunity.id);
+      return left.opportunity.id.localeCompare(right.opportunity.id);
     })
     .slice(0, limit);
 };

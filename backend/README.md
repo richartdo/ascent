@@ -4,7 +4,7 @@
 
 Ascent serves African students, graduates, and young founders who need a safer, more organized way to discover and pursue opportunities. This Express API provides authentication context, profiles, verified opportunity discovery, saved opportunities, application tracking, checklists, and lazy in-app deadline notifications.
 
-Implemented features are operational. Six authenticated AI contracts and deterministic candidate prefiltering are present, but live AI is disabled. With `AI_ENABLED=false`, valid AI requests return HTTP 503 `AI_NOT_CONFIGURED`. The backend never returns fake AI results.
+Implemented features are operational. Opportunity matching can use the private Python synthetic-baseline model service when explicitly enabled. The other five AI contracts remain disabled and return HTTP 503 `AI_NOT_CONFIGURED`. Fresh installations stay fail-closed and the backend never returns fake AI results.
 
 Deferred features include the live OpenAI adapter, email/push notifications, background workers, and deployment.
 
@@ -17,7 +17,7 @@ Deferred features include the live OpenAI adapter, email/push notifications, bac
 - Zod request/environment validation
 - Helmet, CORS, Morgan and express-rate-limit
 - Vitest and Supertest
-- OpenAI-ready provider boundary with no live adapter
+- Provider-neutral AI boundary with custom matching only; OpenAI remains unused
 - Vercel as the future deployment target
 
 ## 3. Prerequisites
@@ -78,6 +78,12 @@ CORS_ORIGINS=http://localhost:3000
 SUPABASE_URL=
 SUPABASE_PUBLISHABLE_KEY=
 AI_ENABLED=false
+AI_PROVIDER=disabled
+MODEL_SERVICE_URL=http://127.0.0.1:8000
+MODEL_SERVICE_API_KEY=
+MODEL_SERVICE_TIMEOUT_MS=3000
+MODEL_SERVICE_MAX_CANDIDATES=20
+MODEL_SERVICE_CONCURRENCY=4
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.6
 AI_TEXT_MAX_LENGTH=30000
@@ -91,7 +97,13 @@ JSON_BODY_LIMIT=100kb
 | `CORS_ORIGINS` | Comma-separated exact HTTP(S) frontend origins, without paths or wildcards. |
 | `SUPABASE_URL` | Project URL from Supabase Dashboard → Project Settings/API. |
 | `SUPABASE_PUBLISHABLE_KEY` | Browser-safe publishable/anon key from the same API settings page. |
-| `AI_ENABLED` | Must remain `false` until a reviewed live adapter is added. |
+| `AI_ENABLED` | Safe default `false`; set `true` only in an untracked environment when running custom matching. |
+| `AI_PROVIDER` | Safe default `disabled`; use `custom` only with the private model service. |
+| `MODEL_SERVICE_URL` | Exact private model-service origin. HTTP is allowed only for loopback. |
+| `MODEL_SERVICE_API_KEY` | Internal shared key; blank is allowed locally and production requires it. Never expose it to a browser. |
+| `MODEL_SERVICE_TIMEOUT_MS` | Per-candidate timeout from 500–10,000 ms. |
+| `MODEL_SERVICE_MAX_CANDIDATES` | Deterministically ordered candidate cap from 1–20. |
+| `MODEL_SERVICE_CONCURRENCY` | Bounded parallel model calls from 1–5. |
 | `OPENAI_API_KEY` | Optional and intentionally empty while AI is disabled. |
 | `OPENAI_MODEL` | Reserved model identifier for the future adapter. |
 | `AI_TEXT_MAX_LENGTH` | Maximum accepted AI text input length. |
@@ -166,7 +178,24 @@ pnpm test
 pnpm test:watch
 ```
 
-`check:syntax` checks every JavaScript file under `src`, `tests`, and `scripts`. `test` runs once and returns non-zero on failure; `test:watch` is interactive. All reported files and tests should pass. Offline tests require no secrets, make no OpenAI calls, and run no remote migrations.
+`check:syntax` checks every JavaScript file under `src`, `tests`, and `scripts`. `test` runs once and returns non-zero on failure; `test:watch` is interactive. Tests mock the private model boundary, require no secrets, make no OpenAI or external calls, and run no remote migrations.
+
+## 11.1 Enable local custom matching
+
+Start the Python service first from `model-service/` on port 8000. In the untracked `backend/.env`, override only:
+
+```dotenv
+AI_ENABLED=true
+AI_PROVIDER=custom
+```
+
+Then start Express on port 5000. Uvicorn must be private; frontend clients call only `POST /api/v1/ai/opportunity-matches` on Express. They must never receive `MODEL_SERVICE_URL` or `MODEL_SERVICE_API_KEY`.
+
+The current synthetic model does not support `job` opportunities or `locationMode=unspecified`; those records are excluded as model-incompatible, not labelled ineligible. Supporting them requires a future retrained dataset/model. Skill overlap uses only transparent matches against structured `requirements` entries. Because there is no structured required-skills field, the baseline cannot reliably identify missing skills and never treats a zero missing-skill count as proof that none are missing.
+
+Education mapping compares a valid `graduationYear` with the current UTC year: secondary, undergraduate, and postgraduate levels map to the corresponding in-progress value for a future year and completed value for a past/current year. Without a year, the fallbacks are secondary completed, bachelor's in progress, graduate/bachelor's completed, and master's in progress. `other` is not invented as a trained category and returns `PROFILE_REQUIRED`. This mapping is only a model input; deterministic opportunity eligibility remains authoritative.
+
+The Postman collection's internal diagnostics folder is for local backend developers only. Its URL is loopback and its key placeholder is blank/secret-typed. Never export a populated environment or copy either internal value into frontend code.
 
 ## 11. Obtain a Supabase access token
 
@@ -289,7 +318,7 @@ Status meanings: `200` success, `201` created, `400` malformed JSON, `401` missi
 | PATCH | `/notifications/{notificationId}/read` | Yes | Mark read | 200, 404, 422 |
 | PATCH | `/notifications/{notificationId}/dismiss` | Yes | Dismiss | 200, 404, 422 |
 | POST | `/notifications/read-all` | Yes | Read all non-dismissed | 200, 422 |
-| POST | `/ai/opportunity-matches` | Yes | Disabled matching contract | 401, 409, 422, 429, 503 |
+| POST | `/ai/opportunity-matches` | Yes | Optional custom synthetic-baseline matching | 200, 401, 409, 422, 429, 502, 503, 504 |
 | POST | `/ai/opportunities/{opportunityId}/summary` | Yes | Disabled summary contract | 401, 422, 429, 503 |
 | POST | `/ai/opportunities/{opportunityId}/readiness` | Yes | Disabled readiness contract | 401, 409, 422, 429, 503 |
 | POST | `/ai/cv-analysis` | Yes | Disabled CV contract | 401, 422, 429, 503 |
@@ -343,7 +372,8 @@ There is no `utils` directory; reusable behavior currently belongs to the closes
 | HTTP 409 | Check duplicate saves/applications, profile requirements, or status transition. |
 | HTTP 422 | Compare JSON/query fields with OpenAPI; unknown fields are rejected. |
 | HTTP 429 | Wait for the 15-minute in-memory window. |
-| AI HTTP 503 | Expected while `AI_ENABLED=false`. Do not fabricate fallback output. |
+| `AI_NOT_CONFIGURED` | Expected while disabled or for all non-matching AI features. Do not fabricate fallback output. |
+| `AI_SERVICE_UNAVAILABLE` / `AI_TIMEOUT` | Start/check the private model service and confirm the backend-only URL/key configuration. |
 | Supabase link failure | Confirm project ref, login, network, and account access. |
 | Docker warning | Needed for local Supabase only, not linked cloud commands. |
 | Migration mismatch | Run `migration list`, inspect history, and never repair blindly. |
@@ -362,7 +392,7 @@ No deployment is performed in this phase. Proposed project settings:
 - Build/output directory: none for zero-configuration Express detection
 - Health endpoint: `/api/v1/health`
 - Exact stable frontend origin in `CORS_ORIGINS`
-- `AI_ENABLED=false`; leave `OPENAI_API_KEY` empty
+- Keep `AI_ENABLED=false` and `AI_PROVIDER=disabled` unless the private custom matcher is intentionally deployed; leave `OPENAI_API_KEY` empty
 - Supabase project URL and publishable key only; no service-role key
 
 The app has a default export for deployment preparation, but Vercel behavior remains unverified until an explicitly approved preview deployment.
@@ -381,5 +411,6 @@ The app has a default export for deployment preparation, but Vercel behavior rem
 - [ ] Opportunities and saved opportunities tested
 - [ ] Applications and checklists tested
 - [ ] Notifications tested
-- [ ] AI endpoint returns expected `AI_NOT_CONFIGURED`
+- [ ] Matching returns either the expected ranked response when custom is enabled or `AI_NOT_CONFIGURED` when disabled
+- [ ] Summary, readiness, CV, cover-letter, and essay endpoints return `AI_NOT_CONFIGURED`
 - [ ] No credentials, tokens, passwords, or service-role keys committed

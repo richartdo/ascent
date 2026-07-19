@@ -1,11 +1,20 @@
 export const createAiController = (aiService) => ({
   matchOpportunities: async (req, res) => {
-    const matches = await aiService.matchOpportunities({
-      supabase: req.supabase,
-      userId: req.auth.user.id,
-      limit: req.validatedBody.limit,
-    });
-    res.status(200).json({ data: { matches } });
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    req.once("aborted", abort);
+    try {
+      const matches = await aiService.matchOpportunities({
+        supabase: req.supabase,
+        userId: req.auth.user.id,
+        limit: req.validatedBody.limit,
+        requestId: req.id,
+        signal: controller.signal,
+      });
+      res.status(200).json({ data: { matches }, meta: { requestId: req.id } });
+    } finally {
+      req.removeListener("aborted", abort);
+    }
   },
   summarizeOpportunity: async (req, res) => {
     const summary = await aiService.summarizeOpportunity({
