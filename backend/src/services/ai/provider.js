@@ -28,12 +28,17 @@ export const createConfiguredAiProvider = ({ configuration = env, fetchImpl } = 
   const client = createModelServiceClient({
     baseUrl: configuration.MODEL_SERVICE_URL,
     apiKey: configuration.MODEL_SERVICE_API_KEY,
-    timeoutMs: configuration.MODEL_SERVICE_TIMEOUT_MS,
+    matchingTimeoutMs: configuration.MODEL_SERVICE_TIMEOUT_MS,
+    generationTimeoutMs: configuration.GENERATION_SERVICE_TIMEOUT_MS ?? 75_000,
     fetchImpl,
   });
+  const enabledFeatures = new Set(configuration.AI_FEATURES ?? [AI_FEATURES.MATCHING]);
   return Object.freeze({
     configured: true,
-    supports: (feature) => feature === AI_FEATURES.MATCHING,
+    supports: (feature) => enabledFeatures.has(feature),
     matchOpportunity: (input) => client.match(input),
+    summarizeOpportunity: (input) => client.summarizeOpportunity(input),
+    assessReadiness: (input) => client.assessReadiness(input),
+    analyzeCv: (input) => client.analyzeCv(input),
   });
 };

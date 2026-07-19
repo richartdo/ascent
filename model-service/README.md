@@ -10,7 +10,7 @@ The current artifact is trained on synthetic data. Its evaluation metrics do not
 
 - Python 3.9 or newer. Current local verification uses Python 3.13.7.
 - The model must use `scikit-learn==1.6.1`, matching the version used during training. Do not upgrade it without retraining or explicitly validating artifact compatibility.
-- Optional generation requires a local [Ollama](https://ollama.com/) installation and the explicitly installed `smollm2:1.7b` model.
+- Recommended hackathon generation requires local [Ollama](https://ollama.com/) and the explicitly installed `qwen3:4b-instruct` model. The committed configuration remains disabled.
 
 ## Setup on Windows PowerShell
 
@@ -98,10 +98,10 @@ Startup fails if configuration or the model artifact is missing, malformed, or i
 
 ## Optional local generation with Ollama
 
-Install Ollama using its official installer, then explicitly install the approved model once:
+Install Ollama using its official installer, then explicitly install the evaluated local model once:
 
 ```powershell
-ollama pull smollm2:1.7b
+ollama pull qwen3:4b-instruct
 ```
 
 The service never runs `ollama pull` or downloads a model automatically. Confirm Ollama is running on port 11434:
@@ -114,9 +114,9 @@ Set these untracked values in `model-service/.env`:
 
 ```env
 GENERATION_ENABLED=true
-GENERATION_FEATURES=opportunity_summary
+GENERATION_FEATURES=opportunity_summary,readiness,cv_analysis
 OLLAMA_BASE_URL=http://127.0.0.1:11434
-OLLAMA_MODEL=smollm2:1.7b
+OLLAMA_MODEL=qwen3:4b-instruct
 OLLAMA_TIMEOUT_SECONDS=60
 OLLAMA_TEMPERATURE=0
 OLLAMA_MAX_INPUT_CHARS=30000
@@ -129,7 +129,9 @@ Start Ollama first, then FastAPI on port 8000:
 uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000
 ```
 
-Generation does not probe Ollama during startup. If generation is disabled, Ollama is stopped, or `smollm2:1.7b` is absent, generation endpoints return sanitized `503 GENERATION_UNAVAILABLE` responses while `/v1/match` continues operating.
+Generation does not probe Ollama during startup. If generation is disabled, Ollama is stopped, or `qwen3:4b-instruct` is absent, generation endpoints return sanitized `503 GENERATION_UNAVAILABLE` responses while `/v1/match` continues operating. The committed `.env.example` remains safely disabled and does not enable these local overrides.
+
+Qwen is a small, pretrained, English-first model. Its output requires human review and is not proven real-world accuracy. In the hackathon scope only summaries, readiness explanations, and CV analysis are enabled. Cover-letter and essay quality was insufficient, so those features remain excluded from the public Express allowlist and the recommended local generation allowlist.
 
 `GENERATION_ENABLED` is the global switch. When it is `false`, every generation endpoint is unavailable regardless of the allowlist. When it is `true`, only features listed in `GENERATION_FEATURES` are available. Supported names are:
 

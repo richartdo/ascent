@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "00000000-0000-4000-8000-000000000002",
     "name": "Ascent Backend",
-    "description": "All implemented Ascent API operations. Set accessToken from a test Supabase user; never save real credentials in this file.",
+    "description": "All implemented Ascent API operations. Browsers and frontend code call Express only—never FastAPI or Ollama. Set accessToken from a test Supabase user and never save real credentials in this file.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
@@ -47,13 +47,14 @@
       { "name": "Dismiss notification", "request": { "method": "PATCH", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/notifications/{{notificationId}}/dismiss" } },
       { "name": "Read all notifications", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/notifications/read-all" } }
     ] },
-    { "name": "Custom opportunity matching", "description": "Frontend and API clients call Express only. Matching returns 200 when the private custom provider is enabled, otherwise AI_NOT_CONFIGURED.", "item": [
-      { "name": "Opportunity matches through Express", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"limit\": 10\n}" }, "url": "{{baseUrl}}/ai/opportunity-matches" } }
-    ] },
-    { "name": "Other AI features (disabled)", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('AI feature is disabled', () => pm.response.to.have.status(503));", "pm.test('AI_NOT_CONFIGURED returned', () => pm.expect(pm.response.json().error.code).to.eql('AI_NOT_CONFIGURED'));" ] } }], "item": [
+    { "name": "Approved AI capabilities through Express", "description": "These are the only four approved public AI capabilities. They require both Express and model-service feature allowlists. Generated output requires human review.", "item": [
+      { "name": "Opportunity matching", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"limit\": 10\n}" }, "url": "{{baseUrl}}/ai/opportunity-matches" } },
       { "name": "Opportunity summary", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/summary" } },
       { "name": "Readiness assessment", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/readiness" } },
-      { "name": "CV analysis", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"cvText\": \"Placeholder CV text for disabled-endpoint verification.\"\n}" }, "url": "{{baseUrl}}/ai/cv-analysis" } },
+      { "name": "General CV analysis", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"cvText\": \"Fictional candidate completed a class project using JavaScript.\"\n}" }, "url": "{{baseUrl}}/ai/cv-analysis" } },
+      { "name": "Opportunity-specific CV analysis", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"cvText\": \"Fictional candidate completed a class project using JavaScript.\",\n  \"opportunityId\": \"{{opportunityId}}\"\n}" }, "url": "{{baseUrl}}/ai/cv-analysis" } }
+    ] },
+    { "name": "Deferred AI capabilities", "description": "Valid requests always return 503 AI_NOT_CONFIGURED and never call FastAPI or Ollama.", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["pm.test('AI feature is deferred', () => pm.response.to.have.status(503));", "pm.test('AI_NOT_CONFIGURED returned', () => pm.expect(pm.response.json().error.code).to.eql('AI_NOT_CONFIGURED'));" ] } }], "item": [
       { "name": "Cover letter", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"tone\": \"professional\"\n}" }, "url": "{{baseUrl}}/ai/opportunities/{{opportunityId}}/cover-letter" } },
       { "name": "Essay assistance", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"mode\": \"outline\",\n  \"prompt\": \"Outline a motivation essay.\"\n}" }, "url": "{{baseUrl}}/ai/essay-assistance" } }
     ] },

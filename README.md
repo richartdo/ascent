@@ -6,7 +6,7 @@ Many promising applicants discover scholarships, internships, grants, fellowship
 
 ## Current capabilities
 
-The backend provides Supabase authentication, profiles, active opportunity discovery, saved opportunities, application tracking, checklists, lazy notifications, and optional custom opportunity matching through a private Python synthetic-baseline service. Other AI routes remain disabled; no OpenAI calls or fabricated results are used.
+The backend provides Supabase authentication, profiles, active opportunity discovery, saved opportunities, application tracking, checklists, lazy notifications, and four optional private-model capabilities: opportunity matching, opportunity summaries, readiness assessment, and general or opportunity-specific CV analysis. Cover-letter generation and essay assistance remain deferred. No OpenAI calls or fabricated fallback results are used.
 
 ## Repository structure
 
@@ -44,7 +44,7 @@ The backend is implementation-ready for local and UAT verification. Deployment p
 - Zod validation
 - Helmet, CORS, Morgan, and express-rate-limit
 - Vitest and Supertest
-- Provider-neutral AI architecture with private custom matching and no OpenAI calls
+- Provider-neutral AI architecture with private Joblib matching and local Qwen generation; no OpenAI calls
 - Vercel as the future deployment target
 
 ## Prerequisites
@@ -103,9 +103,11 @@ SUPABASE_URL=
 SUPABASE_PUBLISHABLE_KEY=
 AI_ENABLED=false
 AI_PROVIDER=disabled
+AI_FEATURES=opportunity_matching
 MODEL_SERVICE_URL=http://127.0.0.1:8000
 MODEL_SERVICE_API_KEY=
 MODEL_SERVICE_TIMEOUT_MS=3000
+GENERATION_SERVICE_TIMEOUT_MS=75000
 MODEL_SERVICE_MAX_CANDIDATES=20
 MODEL_SERVICE_CONCURRENCY=4
 OPENAI_API_KEY=
@@ -121,9 +123,11 @@ JSON_BODY_LIMIT=100kb
 | `CORS_ORIGINS` | Comma-separated exact HTTP(S) frontend origins, without paths or wildcards. |
 | `SUPABASE_URL` | Project URL from Supabase Dashboard → Project Settings/API. |
 | `SUPABASE_PUBLISHABLE_KEY` | Browser-safe publishable/anon project key. |
-| `AI_ENABLED` | Safe default `false`; local custom matching requires an untracked `true` override. |
+| `AI_ENABLED` | Safe default `false`; local private-model capabilities require an untracked `true` override. |
 | `AI_PROVIDER` | Safe default `disabled`; set `custom` only when the private model service is running. |
+| `AI_FEATURES` | Express allowlist. Only matching, summaries, readiness, and CV analysis are accepted. |
 | `MODEL_SERVICE_*` | Backend-only model origin, blank local key, timeout, candidate cap, and concurrency settings. Never expose them to frontend code. |
+| `GENERATION_SERVICE_TIMEOUT_MS` | Generation timeout from 10,000–120,000 ms; keep it slightly above the model-service timeout. |
 | `OPENAI_API_KEY` | Optional and intentionally empty while AI is disabled. |
 | `OPENAI_MODEL` | Model reserved for the future live adapter. |
 | `AI_TEXT_MAX_LENGTH` | Maximum accepted AI text-input length. |
@@ -373,9 +377,9 @@ All paths below are relative to `/api/v1`.
 | PATCH | `/notifications/{notificationId}/dismiss` | Yes | Dismiss notification |
 | POST | `/notifications/read-all` | Yes | Read all non-dismissed notifications |
 | POST | `/ai/opportunity-matches` | Yes | Optional custom synthetic-baseline matching |
-| POST | `/ai/opportunities/{opportunityId}/summary` | Yes | Disabled summary contract |
-| POST | `/ai/opportunities/{opportunityId}/readiness` | Yes | Disabled readiness contract |
-| POST | `/ai/cv-analysis` | Yes | Disabled CV-analysis contract |
+| POST | `/ai/opportunities/{opportunityId}/summary` | Yes | Verified-opportunity summary when allowlisted |
+| POST | `/ai/opportunities/{opportunityId}/readiness` | Yes | Deterministic readiness plus generated explanation when allowlisted |
+| POST | `/ai/cv-analysis` | Yes | General or optional opportunity-specific CV analysis when allowlisted |
 | POST | `/ai/opportunities/{opportunityId}/cover-letter` | Yes | Disabled cover-letter contract |
 | POST | `/ai/essay-assistance` | Yes | Disabled essay contract |
 
@@ -427,7 +431,23 @@ There is currently no `utils` directory; reusable behavior is kept in the closes
 
 ## AI capability behavior
 
-AI is fail-closed by default. With `AI_ENABLED=true` and `AI_PROVIDER=custom`, only opportunity matching is enabled; summaries, readiness, CV analysis, cover letters, and essays still return `AI_NOT_CONFIGURED`. The frontend calls Express only. The Python service and its internal key are never browser configuration. Match scores are synthetic relevance guidance, never outcome probabilities.
+AI is fail-closed by default. For local verification, use untracked or process-only backend values:
+
+```env
+AI_ENABLED=true
+AI_PROVIDER=custom
+AI_FEATURES=opportunity_matching,opportunity_summary,readiness,cv_analysis
+```
+
+The same feature must be enabled in the private model service. Cover letters and essay assistance always return `AI_NOT_CONFIGURED` after authentication, rate limiting, and validation, without calling a model. The frontend calls Express only; FastAPI, Ollama, and internal keys are never browser configuration. Match and readiness scores are guidance, never outcome probabilities.
+
+### Three-process local AI startup
+
+1. Start or verify Ollama on port 11434. If the Windows Ollama app/service is already running, do not start a second server. Install the evaluated model manually with `ollama pull qwen3:4b-instruct` and confirm it with `ollama list`.
+2. From `model-service/`, activate `.venv` and run `uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000` using untracked settings for `opportunity_summary,readiness,cv_analysis` and `OLLAMA_MODEL=qwen3:4b-instruct`.
+3. From `backend/`, run `pnpm dev`; Express listens on port 5000 by default.
+
+CPU-only generation may take tens of seconds. Frontends should show a cancellable loading state and preserve the request ID for support. Generated output requires human review. Matching uses a synthetic-data baseline and Qwen is a small pretrained, English-first model; neither proves real-world accuracy, eligibility, employment suitability, selection, or funding.
 
 ## Troubleshooting
 

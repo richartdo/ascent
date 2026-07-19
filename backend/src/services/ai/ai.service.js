@@ -1,7 +1,10 @@
 import {
-  coverLetterResultSchema,
+  AI_SCHEMA_VERSION,
+  CV_DISCLAIMER,
+  MATCH_DISCLAIMER,
+  READINESS_DISCLAIMER,
+  SUMMARY_DISCLAIMER,
   cvAnalysisResultSchema,
-  essayAssistanceResultSchema,
   matchingResultSchema,
   opportunitySummaryResultSchema,
   readinessResultSchema,
@@ -12,32 +15,16 @@ import { loadMatchingCandidates, loadOpportunityContext, loadUsableMatchingProfi
 import { prefilterOpportunities } from "./opportunityPrefilter.js";
 import { buildDeterministicMatch, mapOpportunityFeatures } from "./opportunityFeatureMapper.js";
 import { AI_FEATURES } from "./provider.js";
-import { buildCoverLetterPrompt } from "./prompts/coverLetter.prompt.js";
-import { buildCvPrompt } from "./prompts/cv.prompt.js";
-import { buildEssayPrompt } from "./prompts/essay.prompt.js";
-import { buildReadinessPrompt } from "./prompts/readiness.prompt.js";
-import { buildSummaryPrompt } from "./prompts/summary.prompt.js";
-import { parseStructuredOutput } from "./structuredOutput.js";
+import { mapOpportunityForGeneration, mapProfileForGeneration } from "./generationInputMapper.js";
+import { calculateReadiness } from "./readinessScoring.js";
 
-const generate = async ({ provider, feature, prompt, schema }) => {
-  try {
-    if (!provider?.supports?.(feature) || typeof provider.generateStructured !== "function") {
-      throw aiError("AI features are temporarily unavailable.", 503, "AI_NOT_CONFIGURED");
-    }
-    const output = await provider.generateStructured({ feature, prompt, schema, timeoutMs: 20_000 });
-    const parsed = parseStructuredOutput({ output, schema });
-    if (parsed.kind === "refusal") {
-      throw aiError("The AI service could not complete this request.", 422, "AI_REFUSED");
-    }
-    return parsed.data;
-  } catch (error) {
-    if (error?.code === "AI_REFUSED") throw error;
-    throw normalizeAiProviderError(error);
+const requireProviderMethod = (provider, feature, method) => {
+  if (!provider?.supports?.(feature) || typeof provider[method] !== "function") {
+    throw aiError("AI features are temporarily unavailable.", 503, "AI_NOT_CONFIGURED");
   }
 };
 
-const relevanceTotal = ({ relevance }) =>
-  Object.values(relevance).reduce((sum, value) => sum + value, 0);
+const relevanceTotal = ({ relevance }) => Object.values(relevance).reduce((sum, value) => sum + value, 0);
 
 const mapWithConcurrency = async ({ items, concurrency, signal, worker }) => {
   const controller = new AbortController();
@@ -52,23 +39,16 @@ const mapWithConcurrency = async ({ items, concurrency, signal, worker }) => {
   const results = new Array(items.length);
   const run = async () => {
     while (!failure && nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      try {
-        results[index] = await worker(items[index], controller.signal);
-      } catch (error) {
-        failure = error;
-        controller.abort();
-      }
+      const index = nextIndex++;
+      try { results[index] = await worker(items[index], controller.signal); }
+      catch (error) { failure = error; controller.abort(); }
     }
   };
   try {
     await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, run));
     if (failure) throw failure;
     return results;
-  } finally {
-    signal?.removeEventListener("abort", abort);
-  }
+  } finally { signal?.removeEventListener("abort", abort); }
 };
 
 export const createAiService = ({
@@ -82,9 +62,7 @@ export const createAiService = ({
   async matchOpportunities({ supabase, userId, limit, requestId, signal, now = new Date() }) {
     const profile = await loadUsableMatchingProfile({ supabase, userId, now });
     const candidates = prefilterOpportunities({
-      profile,
-      opportunities: await loadMatchingCandidates({ supabase, now }),
-      now,
+      profile, opportunities: await loadMatchingCandidates({ supabase, now }), now,
       limit: Math.min(limit, maxCandidates),
     });
     if (candidates.length === 0) return [];
@@ -95,11 +73,7 @@ export const createAiService = ({
         signal,
         worker: async (candidate, batchSignal) => {
           const features = mapOpportunityFeatures({ profile, candidate, now });
-          const modelResult = await provider.matchOpportunity({
-            features,
-            requestId,
-            signal: batchSignal,
-          });
+          const modelResult = await provider.matchOpportunity({ features, requestId, signal: batchSignal });
           return {
             candidate,
             result: matchingResultSchema.parse(buildDeterministicMatch({ candidate, features, modelResult })),
@@ -107,57 +81,91 @@ export const createAiService = ({
         },
       });
       return ranked
-        .sort((left, right) =>
-          right.result.matchScore - left.result.matchScore ||
+        .sort((left, right) => right.result.matchScore - left.result.matchScore ||
           relevanceTotal(right.candidate) - relevanceTotal(left.candidate) ||
           left.result.opportunityId.localeCompare(right.result.opportunityId))
-        .map(({ result }) => result);
-    } catch (error) {
-      throw normalizeAiProviderError(error);
-    }
+        .map(({ result }) => ({ ...result, disclaimer: MATCH_DISCLAIMER }));
+    } catch (error) { throw normalizeAiProviderError(error); }
   },
 
-  async summarizeOpportunity({ supabase, opportunityId }) {
+  async summarizeOpportunity({ supabase, opportunityId, requestId, signal }) {
+    requireProviderMethod(provider, AI_FEATURES.SUMMARY, "summarizeOpportunity");
     const opportunity = await loadOpportunityContext({ supabase, opportunityId });
-    return generate({
-      provider,
-      feature: AI_FEATURES.SUMMARY,
-      prompt: buildSummaryPrompt({ opportunity }),
-      schema: opportunitySummaryResultSchema,
-    });
+    try {
+      const generated = await provider.summarizeOpportunity({
+        input: { opportunity: mapOpportunityForGeneration(opportunity) }, requestId, signal,
+      });
+      return opportunitySummaryResultSchema.parse({
+        schemaVersion: AI_SCHEMA_VERSION,
+        opportunityId,
+        summary: generated.overview,
+        eligibilityHighlights: generated.eligibilityHighlights,
+        benefits: generated.benefits,
+        deadlineNotes: generated.deadlineNotes,
+        missingInformation: generated.missingInformation,
+        disclaimer: SUMMARY_DISCLAIMER,
+      });
+    } catch (error) { throw normalizeAiProviderError(error); }
   },
 
-  async assessReadiness({ supabase, userId, opportunityId }) {
+  async assessReadiness({ supabase, userId, opportunityId, requestId, signal, now = new Date() }) {
+    requireProviderMethod(provider, AI_FEATURES.READINESS, "assessReadiness");
     const [profile, opportunity] = await Promise.all([
       loadUsableProfile({ supabase, userId }),
       loadOpportunityContext({ supabase, opportunityId }),
     ]);
-    return generate({
-      provider,
-      feature: AI_FEATURES.READINESS,
-      prompt: buildReadinessPrompt({ profile, opportunity }),
-      schema: readinessResultSchema,
-    });
+    const deterministic = calculateReadiness({ profile, opportunity, now });
+    try {
+      const generated = await provider.assessReadiness({
+        input: {
+          profile: mapProfileForGeneration(profile),
+          opportunity: mapOpportunityForGeneration(opportunity),
+        },
+        requestId,
+        signal,
+      });
+      return readinessResultSchema.parse({
+        schemaVersion: AI_SCHEMA_VERSION,
+        opportunityId,
+        readinessScore: deterministic.readinessScore,
+        assessment: deterministic.assessment,
+        eligibilityAssessment: deterministic.eligibilityAssessment,
+        components: deterministic.components,
+        explanation: generated.readinessAssessment,
+        strengths: generated.strengths,
+        gaps: [...deterministic.hardIncompatibilities, ...generated.gaps].slice(0, 10),
+        actions: generated.nextActions,
+        missingInformation: deterministic.missingInformation,
+        disclaimer: READINESS_DISCLAIMER,
+      });
+    } catch (error) { throw normalizeAiProviderError(error); }
   },
 
-  analyzeCv({ cvText }) {
-    return generate({ provider, feature: AI_FEATURES.CV, prompt: buildCvPrompt({ cvText }), schema: cvAnalysisResultSchema });
-  },
-
-  async generateCoverLetter({ supabase, userId, opportunityId, tone, instructions }) {
-    const [profile, opportunity] = await Promise.all([
-      loadUsableProfile({ supabase, userId }),
-      loadOpportunityContext({ supabase, opportunityId }),
-    ]);
-    return generate({
-      provider,
-      feature: AI_FEATURES.COVER_LETTER,
-      prompt: buildCoverLetterPrompt({ profile, opportunity, tone, instructions }),
-      schema: coverLetterResultSchema,
-    });
-  },
-
-  assistEssay({ mode, prompt, draft }) {
-    return generate({ provider, feature: AI_FEATURES.ESSAY, prompt: buildEssayPrompt({ mode, prompt, draft }), schema: essayAssistanceResultSchema });
+  async analyzeCv({ supabase, cvText, opportunityId, requestId, signal }) {
+    requireProviderMethod(provider, AI_FEATURES.CV, "analyzeCv");
+    const opportunity = opportunityId
+      ? await loadOpportunityContext({ supabase, opportunityId })
+      : null;
+    try {
+      const generated = await provider.analyzeCv({
+        input: {
+          cvText,
+          ...(opportunity ? { opportunity: mapOpportunityForGeneration(opportunity) } : {}),
+        },
+        requestId,
+        signal,
+      });
+      return cvAnalysisResultSchema.parse({
+        schemaVersion: AI_SCHEMA_VERSION,
+        analysisScope: opportunity ? "opportunity_specific" : "general",
+        opportunityId: opportunity?.id ?? null,
+        strengths: generated.strengths,
+        relevantEvidence: generated.relevantEvidence,
+        gaps: generated.gaps,
+        suggestions: generated.suggestions,
+        missingInformation: generated.missingInformation,
+        disclaimer: CV_DISCLAIMER,
+      });
+    } catch (error) { throw normalizeAiProviderError(error); }
   },
 });
