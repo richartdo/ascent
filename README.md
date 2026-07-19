@@ -8,6 +8,27 @@ Many promising applicants discover scholarships, internships, grants, fellowship
 
 The backend provides Supabase authentication, profiles, active opportunity discovery, saved opportunities, application tracking, checklists, lazy notifications, and four optional private-model capabilities: opportunity matching, opportunity summaries, readiness assessment, and general or opportunity-specific CV analysis. Cover-letter generation and essay assistance remain deferred. No OpenAI calls or fabricated fallback results are used.
 
+## Run locally
+
+Install Git, Node.js 22, pnpm 10, Python 3.13, Ollama, `qwen3:4b-instruct`, Postman, and access to a Supabase development project. Local AI requests flow through three private processes:
+
+```text
+Ollama :11434 → FastAPI model-service :8000 → Express backend :5000
+```
+
+The browser or frontend calls Express only. Never expose the FastAPI URL, Ollama URL, internal model-service key, or Supabase access token in frontend configuration.
+
+Available capabilities are opportunity matching, opportunity summaries, readiness assessment, and general or opportunity-specific CV analysis. Cover-letter generation and essay assistance are deferred and return `503 AI_NOT_CONFIGURED` for valid authenticated requests.
+
+Setup and testing references:
+
+- [Express backend runbook](backend/README.md)
+- [FastAPI model-service guide](model-service/README.md)
+- [OpenAPI specification](backend/docs/openapi.json)
+- [Postman collection](backend/docs/postman/Ascent-Backend.postman_collection.json)
+- [Postman local environment](backend/docs/postman/Ascent-Local.postman_environment.json)
+- [Frontend integration guide](backend/docs/frontend-integration.md)
+
 ## Repository structure
 
 ```text
@@ -56,7 +77,7 @@ Verify the tools:
 ```bash
 git --version
 node --version
-pnpm --version
+pnpm.cmd --version
 ```
 
 If PowerShell blocks `pnpm.ps1`, use `pnpm.cmd`, such as `pnpm.cmd test`, without changing the machine execution policy.
@@ -68,13 +89,13 @@ git clone https://github.com/richartdo/ascent.git
 cd ascent
 git checkout uat
 cd backend
-pnpm install --frozen-lockfile
+pnpm.cmd install --frozen-lockfile
 ```
 
 The frozen lockfile ensures installed dependency versions match `pnpm-lock.yaml`. When intentionally updating dependencies, use:
 
 ```bash
-pnpm install
+pnpm.cmd install
 ```
 
 ## Backend environment setup
@@ -140,13 +161,13 @@ The Supabase publishable key identifies the project; it is not a user access tok
 Create a Supabase project and copy its Project ID/reference, Project URL, and publishable key. From `backend/`, run:
 
 ```bash
-pnpm dlx supabase login
-pnpm dlx supabase link --project-ref YOUR_PROJECT_ID
-pnpm dlx supabase migration list
-pnpm dlx supabase db push --dry-run
-pnpm dlx supabase db push
-pnpm dlx supabase migration list
-pnpm dlx supabase db lint --linked
+pnpm.cmd dlx supabase login
+pnpm.cmd dlx supabase link --project-ref YOUR_PROJECT_ID
+pnpm.cmd dlx supabase migration list
+pnpm.cmd dlx supabase db push --dry-run
+pnpm.cmd dlx supabase db push
+pnpm.cmd dlx supabase migration list
+pnpm.cmd dlx supabase db lint --linked
 ```
 
 Always review the dry run before applying migrations. Never run `db reset --linked` against production, commit a database password, or add service-role credentials. The ordered migrations create the schema, functions, RLS policies, and initial verified opportunity records.
@@ -158,13 +179,13 @@ See the [database migration guide](backend/docs/database-migrations.md) for envi
 Development mode with automatic restart:
 
 ```bash
-pnpm dev
+pnpm.cmd dev
 ```
 
 Production-style local process without file watching:
 
 ```bash
-pnpm start
+pnpm.cmd start
 ```
 
 Expected local address:
@@ -205,9 +226,9 @@ Invoke-WebRequest http://localhost:5000/api/v1/health | Select-Object StatusCode
 ## Run automated checks
 
 ```bash
-pnpm check:syntax
-pnpm test
-pnpm test:watch
+pnpm.cmd check:syntax
+pnpm.cmd test
+pnpm.cmd test:watch
 ```
 
 - `check:syntax` checks JavaScript under `src`, `tests`, and `scripts`.
@@ -444,8 +465,8 @@ The same feature must be enabled in the private model service. Cover letters and
 ### Three-process local AI startup
 
 1. Start or verify Ollama on port 11434. If the Windows Ollama app/service is already running, do not start a second server. Install the evaluated model manually with `ollama pull qwen3:4b-instruct` and confirm it with `ollama list`.
-2. From `model-service/`, activate `.venv` and run `uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000` using untracked settings for `opportunity_summary,readiness,cv_analysis` and `OLLAMA_MODEL=qwen3:4b-instruct`.
-3. From `backend/`, run `pnpm dev`; Express listens on port 5000 by default.
+2. From `model-service/`, run `.venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000` using untracked settings for `opportunity_summary,readiness,cv_analysis` and `OLLAMA_MODEL=qwen3:4b-instruct`.
+3. From `backend/`, run `pnpm.cmd dev`; Express listens on port 5000 by default.
 
 CPU-only generation may take tens of seconds. Frontends should show a cancellable loading state and preserve the request ID for support. Generated output requires human review. Matching uses a synthetic-data baseline and Qwen is a small pretrained, English-first model; neither proves real-world accuracy, eligibility, employment suitability, selection, or funding.
 
@@ -477,7 +498,7 @@ No deployment has been performed. The prepared settings are:
 - Production branch: `main`
 - Preview/UAT branch: `uat`
 - Node.js: 22
-- Install command: `pnpm install --frozen-lockfile`
+- Install command: `pnpm.cmd install --frozen-lockfile`
 - Build command/output directory: none for expected zero-configuration Express detection
 - Health endpoint: `/api/v1/health`
 - Exact stable frontend origin in `CORS_ORIGINS`
