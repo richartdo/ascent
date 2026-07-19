@@ -17,9 +17,8 @@ The current artifact is trained on synthetic data. Its evaluation metrics do not
 ```powershell
 cd model-service
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+.venv\Scripts\python.exe -m pip install --upgrade pip
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
 If the Python launcher is installed on another Windows machine, `py -m venv .venv` may be used as an alternative.
@@ -29,9 +28,8 @@ If the Python launcher is installed on another Windows machine, `py -m venv .ven
 ```bash
 cd model-service
 python -m venv .venv
-source .venv/Scripts/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+.venv/Scripts/python.exe -m pip install --upgrade pip
+.venv/Scripts/python.exe -m pip install -r requirements.txt
 ```
 
 ## Required model files
@@ -78,20 +76,20 @@ Available variables:
 | `OLLAMA_MAX_INPUT_CHARS` | Maximum serialized feature input, up to 30,000 characters. |
 | `OLLAMA_MAX_CONCURRENCY` | Process-local generation concurrency from 1 to 4. |
 
-Uvicorn does not automatically load this project's `.env` file. Pass it explicitly:
+Uvicorn does not automatically load this project's `.env` file. Pass it explicitly without activating the virtual environment:
 
 ```powershell
-uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000
+.venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000
 ```
 
 Keep the service on a private interface or internal network. Do not expose `/v1/match` publicly, send the internal key to browsers, print keys, or commit `.env`.
 
 ## Run locally
 
-After activating `.venv` and installing dependencies:
+After creating `.venv` and installing dependencies:
 
 ```powershell
-uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000
+.venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000
 ```
 
 Startup fails if configuration or the model artifact is missing, malformed, or incompatible.
@@ -104,7 +102,14 @@ Install Ollama using its official installer, then explicitly install the evaluat
 ollama pull qwen3:4b-instruct
 ```
 
-The service never runs `ollama pull` or downloads a model automatically. Confirm Ollama is running on port 11434:
+The service never runs `ollama pull` or downloads a model automatically. Confirm the installed and currently loaded models:
+
+```powershell
+ollama list
+ollama ps
+```
+
+Check the Ollama API on port 11434:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:11434/api/tags
@@ -126,7 +131,7 @@ OLLAMA_MAX_CONCURRENCY=2
 Start Ollama first, then FastAPI on port 8000:
 
 ```powershell
-uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000
+.venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000
 ```
 
 Generation does not probe Ollama during startup. If generation is disabled, Ollama is stopped, or `qwen3:4b-instruct` is absent, generation endpoints return sanitized `503 GENERATION_UNAVAILABLE` responses while `/v1/match` continues operating. The committed `.env.example` remains safely disabled and does not enable these local overrides.
@@ -235,7 +240,7 @@ POST /v1/generate/cover-letter
 POST /v1/generate/essay-assistance
 ```
 
-FastAPI supplies a strict JSON schema to Ollama, rejects missing, misplaced, extra, malformed, or outcome-guaranteeing fields, and adds the schema version, disclaimer, model metadata, and pretrained-model limitation itself. SmolLM2 is never asked to generate disclaimers. Readiness generation produces an explanation only; it cannot create or modify the deterministic numeric readiness score.
+FastAPI supplies a strict JSON schema to Ollama, rejects missing, misplaced, extra, malformed, or outcome-guaranteeing fields, and adds the schema version, disclaimer, model metadata, and pretrained-model limitation itself. Qwen is never asked to generate disclaimers. Readiness generation produces an explanation only; it cannot create or modify the deterministic numeric readiness score.
 
 If Ollama returns a valid outer response but the generated content is invalid JSON or fails the strict output schema, FastAPI may make exactly one schema-correction call. Both calls share the original configured timeout and request ID. The correction prompt includes the required schema and original request context but never includes the invalid generated content. Timeouts, refusals, unavailable-service responses, authentication failures, and semantically unsupported claims are never retried.
 
@@ -243,15 +248,15 @@ Each feature has a bounded output-token allowance: summaries and readiness expla
 
 All supplied profile, opportunity, CV, essay, and instruction content is serialized as untrusted data and separated from static system instructions. Prompts explicitly prohibit following instructions embedded in that content. These controls reduce prompt-injection risk but cannot guarantee that every prompt-injection technique will be prevented; strict validation and human review remain required.
 
-SmolLM2 is a small, English-first pretrained model. Structured JSON does not establish factual accuracy or ensure that content is placed in the most useful field. Review every result against the supplied facts and official opportunity source. Do not use generated text as an eligibility, selection, funding, employment, or success guarantee.
+Qwen is a small, English-first pretrained model. Structured JSON does not establish factual accuracy or ensure that content is placed in the most useful field. Review every result against the supplied facts and official opportunity source. Do not use generated text as an eligibility, selection, funding, employment, or success guarantee.
 
 The generation semaphore limits concurrency only within one FastAPI process. Horizontally scaled deployments require shared capacity controls or coordinated admission limits in front of Ollama.
 
 ## Test and compile
 
 ```powershell
-python -m pytest
-python -m compileall app tests
+.venv\Scripts\python.exe -m pytest
+.venv\Scripts\python.exe -m compileall app tests
 ```
 
 Automated tests use FastAPI's in-process client and a mocked Ollama transport. They require no running Ollama instance, GPU, Supabase, OpenAI, external service, or network connection.
@@ -266,3 +271,17 @@ Automated tests use FastAPI's in-process client and a mocked Ollama transport. T
 - Keep the model service private and rotate internal keys if exposed.
 - Treat every result as synthetic-baseline guidance, not an eligibility or selection guarantee.
 - Treat every generated result as an English-first pretrained-model draft requiring human review.
+
+## Internal developer diagnostics
+
+FastAPI health is unauthenticated:
+
+```powershell
+Invoke-WebRequest http://127.0.0.1:8000/health | Select-Object StatusCode,Content
+```
+
+`POST /v1/match` and every `/v1/generate/*` route require `X-Model-Service-Key`, using the same ignored local value configured in `backend/.env`. Keep this key only in server configuration and the developer-only Postman variable. Never print it, place it in a URL, store it in frontend code, commit a populated Postman environment, or share screenshots containing it.
+
+The trusted Joblib pipeline handles matching. Qwen handles only the allowlisted summary, readiness-explanation, and CV-analysis generation features. Matching remains independent when generation or Ollama is unavailable. FastAPI may perform one bounded schema-correction retry for structurally invalid generated content; Express does not repeat that request.
+
+Neither CV text nor matching/generation requests and results are persisted. Prompts, profile content, opportunity descriptions, model responses, drafts, and credentials must not be logged. Every generated result requires human review.
