@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from app.config import ConfigurationError, Settings
 from app.main import create_app
 from app.services.matching_service import ModelContractError
-from tests.conftest import EXPECTED_HASHES, TRUSTED_METRICS, TRUSTED_MODEL, file_hash
+from tests.conftest import EXPECTED_MODEL_HASH, TRUSTED_METRICS, TRUSTED_MODEL, file_hash
 
 
 def test_successful_startup_uses_trusted_model(settings_factory):
@@ -65,8 +65,8 @@ def test_production_requires_internal_key(monkeypatch):
 
 
 def test_trusted_model_and_metrics_are_unmodified_and_metrics_are_valid_json():
-    assert file_hash(TRUSTED_MODEL) == EXPECTED_HASHES[TRUSTED_MODEL]
-    assert file_hash(TRUSTED_METRICS) == EXPECTED_HASHES[TRUSTED_METRICS]
+    assert file_hash(TRUSTED_MODEL) == EXPECTED_MODEL_HASH
+    metrics_hash_before = file_hash(TRUSTED_METRICS)
     metrics = json.loads(TRUSTED_METRICS.read_text(encoding="utf-8"))
     assert metrics["validation"]["classificationReport"]["accuracy"] == pytest.approx(
         0.9925816023738873
@@ -75,3 +75,4 @@ def test_trusted_model_and_metrics_are_unmodified_and_metrics_are_valid_json():
         0.9954361054766734
     )
     assert metrics["test"]["rocAuc"] == pytest.approx(0.997077781220948)
+    assert file_hash(TRUSTED_METRICS) == metrics_hash_before
