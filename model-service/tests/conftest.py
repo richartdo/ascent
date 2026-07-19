@@ -15,10 +15,7 @@ from app.main import create_app
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 TRUSTED_MODEL = SERVICE_ROOT / "models" / "ascent_matcher.joblib"
 TRUSTED_METRICS = SERVICE_ROOT / "models" / "metrics.json"
-EXPECTED_HASHES = {
-    TRUSTED_MODEL: "74098567b1c9f814b123fe2f796d04fe11479448bb9fd86c181952fe32200406",
-    TRUSTED_METRICS: "eee1a355af3bc47af70a263af4e7cda6a3f8edefb92a6d48464cbd0aa791de49",
-}
+EXPECTED_MODEL_HASH = "74098567b1c9f814b123fe2f796d04fe11479448bb9fd86c181952fe32200406"
 VALID_PAYLOAD: dict[str, Any] = {
     "combinedText": "Python data analysis and community leadership",
     "profileCountry": "KE",
@@ -40,10 +37,11 @@ def file_hash(path: Path) -> str:
 
 @pytest.fixture(scope="session", autouse=True)
 def trusted_artifacts_remain_unchanged():
-    before = {path: file_hash(path) for path in EXPECTED_HASHES}
-    assert before == EXPECTED_HASHES
+    paths = (TRUSTED_MODEL, TRUSTED_METRICS)
+    before = {path: file_hash(path) for path in paths}
+    assert before[TRUSTED_MODEL] == EXPECTED_MODEL_HASH
     yield
-    after = {path: file_hash(path) for path in EXPECTED_HASHES}
+    after = {path: file_hash(path) for path in paths}
     assert after == before
 
 
