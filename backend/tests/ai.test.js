@@ -60,6 +60,23 @@ describe("AI route foundation", () => {
     }
   });
 
+  it("custom provider supports exactly its deduplicated approved feature configuration", () => {
+    const provider = createConfiguredAiProvider({ configuration: {
+      AI_ENABLED: true,
+      AI_PROVIDER: "custom",
+      AI_FEATURES: [AI_FEATURES.MATCHING, AI_FEATURES.SUMMARY, AI_FEATURES.READINESS, AI_FEATURES.CV],
+      MODEL_SERVICE_URL: "http://127.0.0.1:8000",
+      MODEL_SERVICE_API_KEY: "",
+      MODEL_SERVICE_TIMEOUT_MS: 3000,
+      GENERATION_SERVICE_TIMEOUT_MS: 75000,
+    }, fetchImpl: vi.fn() });
+    for (const feature of [AI_FEATURES.MATCHING, AI_FEATURES.SUMMARY, AI_FEATURES.READINESS, AI_FEATURES.CV]) {
+      expect(provider.supports(feature)).toBe(true);
+    }
+    expect(provider.supports(AI_FEATURES.COVER_LETTER)).toBe(false);
+    expect(provider.supports(AI_FEATURES.ESSAY)).toBe(false);
+  });
+
   it("requires authentication before reporting disabled AI", async () => {
     const response = await request(buildApp())
       .post("/api/v1/ai/opportunity-matches")
@@ -122,6 +139,36 @@ describe("AI route foundation", () => {
 
     expect(response.status).toBe(503);
     expect(response.body.error.code).toBe("AI_NOT_CONFIGURED");
+  });
+
+  it("validates deferred requests before returning the exact fail-closed response and never invokes controllers", async () => {
+    const aiService = {
+      configured: true,
+      supports: () => true,
+      generateCoverLetter: vi.fn(),
+      assistEssay: vi.fn(),
+    };
+    const app = buildApp({ aiService, aiEnabled: true });
+    const malformed = await request(app)
+      .post(`/api/v1/ai/opportunities/${opportunityId}/cover-letter`)
+      .set("Authorization", "Bearer test-token")
+      .send({ tone: "unsupported" });
+    expect(malformed.status).toBe(422);
+
+    for (const [path, body] of [
+      [`/api/v1/ai/opportunities/${opportunityId}/cover-letter`, { tone: "professional" }],
+      ["/api/v1/ai/essay-assistance", { mode: "outline", prompt: "Fictional prompt." }],
+    ]) {
+      const response = await request(app).post(path).set("Authorization", "Bearer test-token").send(body);
+      expect(response.status).toBe(503);
+      expect(response.body).toEqual({ error: {
+        code: "AI_NOT_CONFIGURED",
+        message: "AI features are temporarily unavailable.",
+        requestId: response.headers["x-request-id"],
+      } });
+    }
+    expect(aiService.generateCoverLetter).not.toHaveBeenCalled();
+    expect(aiService.assistEssay).not.toHaveBeenCalled();
   });
 
   it("returns 409 PROFILE_REQUIRED for matching when the profile is insufficient", async () => {

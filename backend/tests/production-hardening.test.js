@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
@@ -24,5 +26,17 @@ describe("production hardening", () => {
     expect(json).toHaveBeenCalledWith({
       error: { code: "INTERNAL_ERROR", message: "An unexpected error occurred.", requestId: "request-id" },
     });
+  });
+
+  it("does not import or instantiate the OpenAI client in backend source", async () => {
+    const files = [
+      "../src/app.js",
+      "../src/services/ai/ai.service.js",
+      "../src/services/ai/provider.js",
+      "../src/services/ai/modelServiceClient.js",
+    ];
+    const source = (await Promise.all(files.map((relative) =>
+      readFile(fileURLToPath(new URL(relative, import.meta.url)), "utf8")))).join("\n");
+    expect(source).not.toMatch(/from\s+["']openai["']|require\(["']openai["']\)|new\s+OpenAI\b/);
   });
 });

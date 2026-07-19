@@ -17,3 +17,13 @@ export const createRequireAiConfigured = ({
   }
   next();
 };
+
+export const deferredAiFeature = (req, res) => {
+  res.status(503).json({
+    error: {
+      code: "AI_NOT_CONFIGURED",
+      message: "AI features are temporarily unavailable.",
+      requestId: req.id,
+    },
+  });
+};

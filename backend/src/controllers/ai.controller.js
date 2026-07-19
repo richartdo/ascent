@@ -17,23 +17,41 @@ export const createAiController = (aiService) => ({
     }
   },
   summarizeOpportunity: async (req, res) => {
-    const summary = await aiService.summarizeOpportunity({
-      supabase: req.supabase,
-      opportunityId: req.validatedParams.opportunityId,
-    });
-    res.status(200).json({ data: { summary } });
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    req.once("aborted", abort);
+    try {
+      const summary = await aiService.summarizeOpportunity({
+        supabase: req.supabase, opportunityId: req.validatedParams.opportunityId,
+        requestId: req.id, signal: controller.signal,
+      });
+      res.status(200).json({ data: { summary }, meta: { requestId: req.id } });
+    } finally { req.removeListener("aborted", abort); }
   },
   assessReadiness: async (req, res) => {
-    const readiness = await aiService.assessReadiness({
-      supabase: req.supabase,
-      userId: req.auth.user.id,
-      opportunityId: req.validatedParams.opportunityId,
-    });
-    res.status(200).json({ data: { readiness } });
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    req.once("aborted", abort);
+    try {
+      const readiness = await aiService.assessReadiness({
+        supabase: req.supabase, userId: req.auth.user.id,
+        opportunityId: req.validatedParams.opportunityId, requestId: req.id,
+        signal: controller.signal,
+      });
+      res.status(200).json({ data: { readiness }, meta: { requestId: req.id } });
+    } finally { req.removeListener("aborted", abort); }
   },
   analyzeCv: async (req, res) => {
-    const analysis = await aiService.analyzeCv(req.validatedBody);
-    res.status(200).json({ data: { analysis } });
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    req.once("aborted", abort);
+    try {
+      const analysis = await aiService.analyzeCv({
+        supabase: req.supabase, ...req.validatedBody, requestId: req.id,
+        signal: controller.signal,
+      });
+      res.status(200).json({ data: { analysis }, meta: { requestId: req.id } });
+    } finally { req.removeListener("aborted", abort); }
   },
   generateCoverLetter: async (req, res) => {
     const coverLetter = await aiService.generateCoverLetter({

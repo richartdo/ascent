@@ -8,6 +8,7 @@ import {
 import { createAiService } from "../src/services/ai/ai.service.js";
 import { normalizeAiProviderError } from "../src/services/ai/errors.js";
 import { parseStructuredOutput } from "../src/services/ai/structuredOutput.js";
+import { AI_FEATURES } from "../src/services/ai/provider.js";
 
 const matchingFixture = {
   schemaVersion: "1.0",
@@ -60,12 +61,13 @@ describe("AI structured-output contracts", () => {
     const sensitive = "private-cv-text@example.com";
     const provider = {
       configured: true,
-      generateStructured: vi.fn().mockRejectedValue(new Error(sensitive)),
+      supports: (feature) => feature === AI_FEATURES.CV,
+      analyzeCv: vi.fn().mockRejectedValue(new Error(sensitive)),
     };
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     const service = createAiService({ provider });
 
-    await expect(service.analyzeCv({ cvText: sensitive })).rejects.toMatchObject({
+    await expect(service.analyzeCv({ cvText: sensitive, requestId: "11111111-1111-4111-8111-111111111111" })).rejects.toMatchObject({
       code: "AI_SERVICE_UNAVAILABLE",
       message: "The AI service is temporarily unavailable.",
     });

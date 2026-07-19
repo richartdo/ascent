@@ -1,7 +1,7 @@
 import { Router } from "express";
 
 import { createAiController } from "../controllers/ai.controller.js";
-import { createRequireAiConfigured } from "../middleware/aiAvailability.js";
+import { createRequireAiConfigured, deferredAiFeature } from "../middleware/aiAvailability.js";
 import { createAiRateLimiters } from "../middleware/aiRateLimit.js";
 import { validateBody, validateParams } from "../middleware/validate.js";
 import {
@@ -24,7 +24,7 @@ export const createAiRouter = ({ authenticate, aiService, rateLimiters = createA
   router.post("/opportunities/:opportunityId/summary", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(emptyAiRequestSchema), requireFeature(AI_FEATURES.SUMMARY), controller.summarizeOpportunity);
   router.post("/opportunities/:opportunityId/readiness", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(emptyAiRequestSchema), requireFeature(AI_FEATURES.READINESS), controller.assessReadiness);
   router.post("/cv-analysis", ...protectedRoute, validateBody(cvAnalysisRequestSchema), requireFeature(AI_FEATURES.CV), controller.analyzeCv);
-  router.post("/opportunities/:opportunityId/cover-letter", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(coverLetterRequestSchema), requireFeature(AI_FEATURES.COVER_LETTER), controller.generateCoverLetter);
-  router.post("/essay-assistance", ...protectedRoute, validateBody(essayAssistanceRequestSchema), requireFeature(AI_FEATURES.ESSAY), controller.assistEssay);
+  router.post("/opportunities/:opportunityId/cover-letter", ...protectedRoute, validateParams(aiOpportunityIdParamsSchema), validateBody(coverLetterRequestSchema), deferredAiFeature);
+  router.post("/essay-assistance", ...protectedRoute, validateBody(essayAssistanceRequestSchema), deferredAiFeature);
   return router;
 };

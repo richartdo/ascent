@@ -70,11 +70,24 @@ describe("environment hardening", () => {
     expect(parsed).toMatchObject({
       AI_ENABLED: true,
       AI_PROVIDER: "custom",
+      AI_FEATURES: ["opportunity_matching"],
       MODEL_SERVICE_TIMEOUT_MS: 3000,
+      GENERATION_SERVICE_TIMEOUT_MS: 75000,
       MODEL_SERVICE_MAX_CANDIDATES: 20,
       MODEL_SERVICE_CONCURRENCY: 4,
       OPENAI_API_KEY: "",
     });
+  });
+
+  it("validates, trims and deduplicates the approved AI feature allowlist", () => {
+    const parsed = parseEnvironment({
+      ...base,
+      AI_FEATURES: "opportunity_matching, readiness,readiness,cv_analysis",
+    });
+    expect(parsed.AI_FEATURES).toEqual(["opportunity_matching", "readiness", "cv_analysis"]);
+    for (const AI_FEATURES of ["cover_letter", "essay_assistance", "unknown", ""]) {
+      expect(() => parseEnvironment({ ...base, AI_FEATURES })).toThrow(/AI_FEATURES/);
+    }
   });
 
   it.each([
@@ -86,6 +99,8 @@ describe("environment hardening", () => {
     { MODEL_SERVICE_URL: "https://example.com#fragment" },
     { MODEL_SERVICE_TIMEOUT_MS: "499" },
     { MODEL_SERVICE_TIMEOUT_MS: "10001" },
+    { GENERATION_SERVICE_TIMEOUT_MS: "9999" },
+    { GENERATION_SERVICE_TIMEOUT_MS: "120001" },
     { MODEL_SERVICE_MAX_CANDIDATES: "0" },
     { MODEL_SERVICE_MAX_CANDIDATES: "21" },
     { MODEL_SERVICE_CONCURRENCY: "0" },

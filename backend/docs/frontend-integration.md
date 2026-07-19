@@ -42,7 +42,15 @@ Never replace an AI 503 with fabricated recommendations, summaries, CV feedback,
 
 The frontend may call only `POST /ai/opportunity-matches` on the Express API with the user's bearer token and `{ "limit": 10 }`. Express loads the authenticated profile and verified opportunities, applies deterministic eligibility rules, and privately calls the Python model service. Never put the model-service URL or internal key in frontend code and never call FastAPI from a browser.
 
-Each `matchScore` is synthetic-baseline relevance guidance, not a probability of eligibility, acceptance, selection, or funding. Explicit deterministic eligibility remains authoritative. A `409 PROFILE_REQUIRED` may include `error.details.profileGaps` containing `countryCode` or `educationLevel`; direct the user to update those fields. Other AI endpoints remain unavailable.
+Each `matchScore` is synthetic-baseline relevance guidance, not a probability of eligibility, acceptance, selection, or funding. Explicit deterministic eligibility remains authoritative. A `409 PROFILE_REQUIRED` may include `error.details.profileGaps` containing `countryCode` or `educationLevel`; direct the user to update those fields.
+
+## Summaries, readiness, and CV analysis
+
+Call summaries with `POST /ai/opportunities/{opportunityId}/summary` and `{}`. Call readiness at the corresponding `/readiness` path. Express loads the profile and/or opportunity through the authenticated request-scoped Supabase client; never send raw profile or opportunity content. Readiness component earned points sum exactly to `readinessScore`. Treat `missingInformation` and `eligibilityAssessment=uncertain` visibly, and never present the score as selection probability.
+
+`POST /ai/cv-analysis` accepts either `{ "cvText": "..." }` for general analysis or `{ "cvText": "...", "opportunityId": "uuid" }` for opportunity-specific relevance. Use `analysisScope` and nullable `opportunityId` to label the result accurately. Do not send CV text in URLs, telemetry, error reports, or client logs. Generated content requires human review; CPU responses can take tens of seconds, so show a cancellable loading state and preserve `meta.requestId`.
+
+Cover-letter and essay routes are deferred. Valid authenticated requests return `503 AI_NOT_CONFIGURED`; do not expose controls as working features and do not call FastAPI or Ollama from the browser.
 
 ## Opportunities
 

@@ -43,7 +43,10 @@ export const emptyAiRequestSchema = z.preprocess(
   z.object({}).strict(),
 );
 export const cvAnalysisRequestSchema = z
-  .object({ cvText: boundedText(env.AI_TEXT_MAX_LENGTH) })
+  .object({
+    cvText: boundedText(Math.min(env.AI_TEXT_MAX_LENGTH, 20_000)),
+    opportunityId: z.string().uuid().optional(),
+  })
   .strict();
 export const coverLetterRequestSchema = z
   .object({
@@ -80,6 +83,7 @@ export const opportunitySummaryResultSchema = rejectOutcomeGuarantees(z
     eligibilityHighlights: boundedList(10),
     benefits: boundedList(10),
     deadlineNotes: boundedText(500),
+    missingInformation: boundedList(10),
     disclaimer: z.literal(SUMMARY_DISCLAIMER),
   })
   .strict());
@@ -90,9 +94,18 @@ export const readinessResultSchema = rejectOutcomeGuarantees(z
     opportunityId: z.string().uuid(),
     readinessScore: z.number().int().min(0).max(100),
     assessment: z.enum(["ready", "needs_preparation", "substantial_gaps"]),
+    eligibilityAssessment: z.enum(["likely", "uncertain", "unlikely"]),
+    components: z.object({
+      profileCompleteness: z.object({ earned: z.number().int().min(0).max(30), maximum: z.literal(30) }).strict(),
+      eligibilityCompatibility: z.object({ earned: z.number().int().min(0).max(30), maximum: z.literal(30) }).strict(),
+      preferenceFit: z.object({ earned: z.number().int().min(0).max(20), maximum: z.literal(20) }).strict(),
+      skillEvidence: z.object({ earned: z.number().int().min(0).max(20), maximum: z.literal(20) }).strict(),
+    }).strict(),
+    explanation: boundedText(1200),
     strengths: boundedList(10),
     gaps: boundedList(10),
     actions: boundedList(10),
+    missingInformation: boundedList(10),
     disclaimer: z.literal(READINESS_DISCLAIMER),
   })
   .strict());
@@ -100,10 +113,13 @@ export const readinessResultSchema = rejectOutcomeGuarantees(z
 export const cvAnalysisResultSchema = rejectOutcomeGuarantees(z
   .object({
     schemaVersion: z.literal(AI_SCHEMA_VERSION),
-    summary: boundedText(1200),
+    analysisScope: z.enum(["general", "opportunity_specific"]),
+    opportunityId: z.string().uuid().nullable(),
     strengths: boundedList(12),
+    relevantEvidence: boundedList(12),
     gaps: boundedList(12),
     suggestions: boundedList(12),
+    missingInformation: boundedList(12),
     disclaimer: z.literal(CV_DISCLAIMER),
   })
   .strict());

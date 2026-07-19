@@ -21,6 +21,23 @@ const platformBoolean = z.preprocess(
     .transform((value) => value === "1" || value === "true"),
 );
 
+const supportedAiFeatures = new Set([
+  "opportunity_matching",
+  "opportunity_summary",
+  "readiness",
+  "cv_analysis",
+]);
+const aiFeaturesSchema = trimmedString()
+  .default("opportunity_matching")
+  .transform((value, context) => {
+    const features = [...new Set(value.split(",").map((feature) => feature.trim()).filter(Boolean))];
+    if (features.length === 0 || features.some((feature) => !supportedAiFeatures.has(feature))) {
+      context.addIssue({ code: "custom", message: "AI_FEATURES contains an unsupported feature." });
+      return z.NEVER;
+    }
+    return features;
+  });
+
 const corsOriginsSchema = trimmedString()
   .default("http://localhost:3000")
   .transform((value, context) => {
@@ -68,9 +85,11 @@ const envSchema = z.object({
   SUPABASE_PUBLISHABLE_KEY: optionalTrimmedString,
   AI_ENABLED: booleanString(),
   AI_PROVIDER: trimmedString(z.enum(["disabled", "custom"])).default("disabled"),
+  AI_FEATURES: aiFeaturesSchema,
   MODEL_SERVICE_URL: modelServiceOriginSchema,
   MODEL_SERVICE_API_KEY: optionalTrimmedString,
   MODEL_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(500).max(10_000).default(3000),
+  GENERATION_SERVICE_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(120_000).default(75_000),
   MODEL_SERVICE_MAX_CANDIDATES: z.coerce.number().int().min(1).max(20).default(20),
   MODEL_SERVICE_CONCURRENCY: z.coerce.number().int().min(1).max(5).default(4),
   OPENAI_API_KEY: optionalTrimmedString,

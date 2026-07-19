@@ -37,16 +37,35 @@ describe("OpenAPI and API-client assets", () => {
     }
   });
 
-  it("documents AI_NOT_CONFIGURED for every AI operation", async () => {
+  it("documents fail-closed and dependency-unavailable responses for every AI operation", async () => {
     const document = await loadJson("../docs/openapi.json");
     for (const [method, path] of registeredOperations.filter(([, path]) => path.includes("/ai/"))) {
       const operation = resolveOperation(document, method, path);
-      expect(operation.responses["503"].$ref).toBe(path.endsWith("opportunity-matches")
-        ? "#/components/responses/AiMatchingUnavailable"
-        : "#/components/responses/AiNotConfigured");
+      const deferred = path.endsWith("cover-letter") || path.endsWith("essay-assistance");
+      expect(operation.responses["503"].$ref).toBe(deferred
+        ? "#/components/responses/AiNotConfigured"
+        : "#/components/responses/AiMatchingUnavailable");
     }
     expect(document.components.responses.AiNotConfigured.content["application/json"].example.error.code)
       .toBe("AI_NOT_CONFIGURED");
+  });
+
+  it("documents success and sanitized failures for all four approved AI capabilities", async () => {
+    const document = await loadJson("../docs/openapi.json");
+    for (const path of [
+      "/api/v1/ai/opportunity-matches",
+      "/api/v1/ai/opportunities/{opportunityId}/summary",
+      "/api/v1/ai/opportunities/{opportunityId}/readiness",
+      "/api/v1/ai/cv-analysis",
+    ]) {
+      const operation = resolveOperation(document, "post", path);
+      expect(operation.responses["200"], path).toBeDefined();
+      expect(operation.responses["502"].$ref).toBe("#/components/responses/AiMalformedResponse");
+      expect(operation.responses["504"].$ref).toBe("#/components/responses/AiTimeout");
+    }
+    expect(document.components.schemas.CvRequest.properties.opportunityId.format).toBe("uuid");
+    expect(document.components.schemas.CvRequest.required).toEqual(["cvText"]);
+    expect(document.components.schemas.ReadinessResult.properties.components).toBeDefined();
   });
 
   it("documents matching success and sanitized model dependency failures", async () => {
@@ -63,7 +82,7 @@ describe("OpenAPI and API-client assets", () => {
     const collection = await loadJson("../docs/postman/Ascent-Backend.postman_collection.json");
     const environment = await loadJson("../docs/postman/Ascent-Local.postman_environment.json");
     const requests = collection.item.flatMap((folder) => folder.item);
-    expect(requests).toHaveLength(29);
+    expect(requests).toHaveLength(30);
     expect(environment.values.map(({ key }) => key)).toEqual([
       "baseUrl", "accessToken", "opportunityId", "applicationId", "notificationId",
       "supabaseUrl", "supabasePublishableKey", "modelServiceUrl", "modelServiceApiKey",
