@@ -20,6 +20,7 @@ from app.errors import (
     validation_error_handler,
 )
 from app.middleware import RequestSafetyMiddleware, require_internal_key
+from app.routes.generation import create_generation_router
 from app.schemas import (
     HealthData,
     HealthResponse,
@@ -28,6 +29,8 @@ from app.schemas import (
     MatchResponse,
 )
 from app.services.matching_service import MatchingService
+from app.services.generation_service import GenerationService
+from app.services.ollama_client import OllamaClient
 
 
 logger = logging.getLogger("ascent_model_service.inference")
@@ -36,12 +39,18 @@ logger = logging.getLogger("ascent_model_service.inference")
 logging.getLogger("uvicorn.access").disabled = True
 DISCLAIMER = "This score is guidance, not a guarantee of eligibility or selection."
 ModelLoader = Callable[[object], MatchingService]
+OllamaClientFactory = Callable[[Settings], OllamaClient]
+
+
+def default_ollama_client_factory(settings: Settings) -> OllamaClient:
+    return OllamaClient(settings=settings)
 
 
 def create_app(
     *,
     settings: Settings | None = None,
     model_loader: ModelLoader = MatchingService.load,
+    ollama_client_factory: OllamaClientFactory = default_ollama_client_factory,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI):
@@ -50,8 +59,22 @@ def create_app(
         application.state.matching_service = model_loader(
             resolved_settings.model_path
         )
-        yield
-        application.state.matching_service = None
+        ollama_client = (
+            ollama_client_factory(resolved_settings)
+            if resolved_settings.generation_enabled
+            else None
+        )
+        application.state.generation_service = GenerationService(
+            settings=resolved_settings,
+            client=ollama_client,
+        )
+        try:
+            yield
+        finally:
+            if ollama_client is not None:
+                await ollama_client.close()
+            application.state.generation_service = None
+            application.state.matching_service = None
 
     application = FastAPI(
         title="Ascent Model Service",
@@ -66,6 +89,7 @@ def create_app(
     application.add_exception_handler(RequestValidationError, validation_error_handler)
     application.add_exception_handler(StarletteHTTPException, http_error_handler)
     application.add_exception_handler(Exception, unexpected_error_handler)
+    application.include_router(create_generation_router())
 
     @application.get("/health", response_model=HealthResponse)
     async def health(request: Request) -> HealthResponse:

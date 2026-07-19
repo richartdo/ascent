@@ -69,6 +69,22 @@ def settings_factory():
         api_key: str | None = None,
         request_max_bytes: int = 32_768,
         environment: str = "test",
+        generation_enabled: bool = False,
+        generation_features: frozenset[str] = frozenset(
+            {
+                "opportunity_summary",
+                "readiness",
+                "cv_analysis",
+                "cover_letter",
+                "essay_assistance",
+            }
+        ),
+        ollama_base_url: str = "http://127.0.0.1:11434",
+        ollama_model: str = "smollm2:1.7b",
+        ollama_timeout_seconds: float = 60,
+        ollama_temperature: float = 0,
+        ollama_max_input_chars: int = 30_000,
+        ollama_max_concurrency: int = 2,
     ) -> Settings:
         return Settings(
             service_root=SERVICE_ROOT,
@@ -76,6 +92,14 @@ def settings_factory():
             api_key=api_key,
             environment=environment,
             request_max_bytes=request_max_bytes,
+            generation_enabled=generation_enabled,
+            generation_features=generation_features,
+            ollama_base_url=ollama_base_url,
+            ollama_model=ollama_model,
+            ollama_timeout_seconds=ollama_timeout_seconds,
+            ollama_temperature=ollama_temperature,
+            ollama_max_input_chars=ollama_max_input_chars,
+            ollama_max_concurrency=ollama_max_concurrency,
         )
 
     return build
