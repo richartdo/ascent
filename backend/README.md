@@ -27,7 +27,7 @@ Install Git, Node.js 22, pnpm 10, and create a Supabase account/project. The Sup
 ```bash
 git --version
 node --version
-pnpm --version
+pnpm.cmd --version
 ```
 
 If PowerShell blocks `pnpm.ps1`, use `pnpm.cmd` without changing the machine execution policy, for example `pnpm.cmd test`.
@@ -46,13 +46,13 @@ cd backend
 ## 5. Install dependencies
 
 ```bash
-pnpm install --frozen-lockfile
+pnpm.cmd install --frozen-lockfile
 ```
 
 The frozen lockfile makes installation fail rather than silently changing dependency versions recorded in `pnpm-lock.yaml`. When intentionally updating dependencies, use:
 
 ```bash
-pnpm install
+pnpm.cmd install
 ```
 
 ## 6. Environment setup
@@ -115,18 +115,20 @@ JSON_BODY_LIMIT=100kb
 
 The publishable key identifies the Supabase project; it is not a user access token. RLS and the authenticated user's JWT enforce ownership. No service-role key is needed or permitted. `.env` is ignored and must never be committed.
 
+For local manual testing, supply real values only for `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and the same private `MODEL_SERVICE_API_KEY` used by `model-service/.env`. Keep `OPENAI_API_KEY` empty. Leave `VERCEL` unset locally; the parser defaults it to false and Vercel supplies it on-platform.
+
 ## 7. Supabase project and migrations
 
 Create a Supabase project in the dashboard. Copy its Project ID/reference, Project URL, and publishable key. From `backend/`:
 
 ```bash
-pnpm dlx supabase login
-pnpm dlx supabase link --project-ref YOUR_PROJECT_ID
-pnpm dlx supabase migration list
-pnpm dlx supabase db push --dry-run
-pnpm dlx supabase db push
-pnpm dlx supabase migration list
-pnpm dlx supabase db lint --linked
+pnpm.cmd dlx supabase login
+pnpm.cmd dlx supabase link --project-ref YOUR_PROJECT_ID
+pnpm.cmd dlx supabase migration list
+pnpm.cmd dlx supabase db push --dry-run
+pnpm.cmd dlx supabase db push
+pnpm.cmd dlx supabase migration list
+pnpm.cmd dlx supabase db lint --linked
 ```
 
 Always inspect the dry run before applying. Never run `db reset --linked` against production, commit a database password, or add service-role credentials. The ordered migration files create the schema, RLS policies, functions, and initial verified opportunity seeds. See [database-migrations.md](docs/database-migrations.md).
@@ -138,13 +140,13 @@ Docker Desktop is required only for Supabase's full local stack; linked migratio
 Development with automatic restart:
 
 ```bash
-pnpm dev
+pnpm.cmd dev
 ```
 
 Production-style local process without file watching:
 
 ```bash
-pnpm start
+pnpm.cmd start
 ```
 
 Both use `src/server.js`, validate configuration, and listen on `PORT`. The expected local address is `http://localhost:5000`; the API base is `http://localhost:5000/api/v1`. Startup logs report only the port, not credentials.
@@ -177,9 +179,9 @@ Only health is intended for browser testing without an Authorization header.
 ## 10. Automated verification
 
 ```bash
-pnpm check:syntax
-pnpm test
-pnpm test:watch
+pnpm.cmd check:syntax
+pnpm.cmd test
+pnpm.cmd test:watch
 ```
 
 `check:syntax` checks every JavaScript file under `src`, `tests`, and `scripts`. `test` runs once and returns non-zero on failure; `test:watch` is interactive. Tests mock the private model boundary, require no secrets, make no OpenAI or external calls, and run no remote migrations.
@@ -201,7 +203,7 @@ OLLAMA_MAX_INPUT_CHARS=30000
 OLLAMA_MAX_CONCURRENCY=2
 ```
 
-Run `uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000`. In the untracked `backend/.env`, use:
+Run `.venv\Scripts\python.exe -m uvicorn app.main:app --env-file .env --host 127.0.0.1 --port 8000`. In the untracked `backend/.env`, use:
 
 ```dotenv
 AI_ENABLED=true
@@ -210,7 +212,7 @@ AI_FEATURES=opportunity_matching,opportunity_summary,readiness,cv_analysis
 GENERATION_SERVICE_TIMEOUT_MS=75000
 ```
 
-Then run `pnpm dev`. Uvicorn must be private; frontend clients call only Express and must never receive `MODEL_SERVICE_URL`, `MODEL_SERVICE_API_KEY`, or the Ollama origin. CPU generation may take tens of seconds, so clients should show a cancellable loading state and retain the response request ID.
+Then run `pnpm.cmd dev`. Uvicorn must be private; frontend clients call only Express and must never receive `MODEL_SERVICE_URL`, `MODEL_SERVICE_API_KEY`, or the Ollama origin. CPU generation may take tens of seconds, so clients should show a cancellable loading state and retain the response request ID.
 
 Readiness uses deterministic components totaling 100 points: profile completeness 30, explicit eligibility compatibility 30, preference fit 20, and positive structured skill evidence 20. Unknown country or education information receives exactly half credit for that 10-point check and is exposed as uncertainty. Explicit incompatibility produces `unlikely` and caps the total at 74. Qwen supplies explanations only and cannot alter points, band, or eligibility assessment.
 
@@ -241,24 +243,45 @@ Postman is the recommended primary client. Import:
 
 Select the environment, set `accessToken`, and replace resource-ID placeholders with records visible to the test user. Thunder Client can use the same `baseUrl`, bearer token, and JSON bodies. curl and `Invoke-WebRequest` are suitable terminal alternatives; the Supabase Dashboard is used for users, tables, and RLS checks.
 
-Recommended sequence:
+Required local testing order:
 
-1. Health check
-2. Authentication context
-3. Update profile
-4. Get profile
-5. List opportunities
-6. View an opportunity
-7. Save an opportunity
-8. List saved opportunities
-9. Create an application
-10. Update application status
-11. Update checklist
-12. List notifications
-13. Read notification
-14. Dismiss notification
-15. Call an AI endpoint
-16. Confirm `AI_NOT_CONFIGURED`
+1. Run automated backend tests with `pnpm.cmd check:syntax` and `pnpm.cmd test`.
+2. Run automated model-service tests with `.venv\Scripts\python.exe -m pytest`.
+3. Confirm Ollama and Qwen with `ollama list`, `ollama ps`, and the Ollama API check in the model-service guide.
+4. Start FastAPI using the direct `.venv\Scripts\python.exe` command.
+5. Test FastAPI health and expect HTTP 200.
+6. Start Express with `pnpm.cmd dev`.
+7. Test Express health and expect HTTP 200.
+8. Obtain a development test-user access token without saving it in Git.
+9. Test `/auth/me` and create or update the test user's profile.
+10. List opportunities and copy an RLS-visible `opportunityId`.
+11. Test opportunity matching.
+12. Test the opportunity summary.
+13. Test readiness assessment.
+14. Test general CV analysis with fictional text and no `opportunityId`.
+15. Test opportunity-specific CV analysis with fictional text and the visible `opportunityId`.
+16. Test cover-letter and essay routes and confirm HTTP 503 `AI_NOT_CONFIGURED` for valid bodies.
+17. Stop only the FastAPI and Express processes started for this test.
+
+Expected local results:
+
+| Check | Expected result |
+|---|---|
+| Express health | HTTP 200 |
+| FastAPI health | HTTP 200 |
+| Protected endpoint without token | HTTP 401 |
+| Invalid or unknown request field | HTTP 422 |
+| Matching | Normally under 1 second |
+| Opportunity summary | Approximately 35 seconds on the current CPU |
+| Readiness | Approximately 35 seconds on the current CPU |
+| CV analysis | Approximately 37 seconds on the current CPU |
+| Deferred features | HTTP 503 `AI_NOT_CONFIGURED` |
+| Ollama/FastAPI unavailable | Sanitized HTTP 503 |
+| Generation timeout | Sanitized HTTP 504 |
+
+Generation latency varies substantially with CPU, memory, model state, and concurrent work.
+
+Postman variables required for public testing are `baseUrl`, `accessToken`, `opportunityId`, `supabaseUrl`, and `supabasePublishableKey`. `modelServiceUrl` and `modelServiceApiKey` are developer-only internal diagnostics. Keep placeholders in exported files, never commit populated Postman environments, never put the internal key in frontend code, and never share screenshots containing tokens or keys.
 
 ## 13. curl examples
 
@@ -386,17 +409,23 @@ There is no `utils` directory; reusable behavior currently belongs to the closes
 
 | Problem | Check |
 |---|---|
-| PowerShell blocks pnpm | Use `pnpm.cmd`. |
+| PowerShell reports a `pnpm.ps1` execution-policy error | Use `pnpm.cmd`; changing the machine execution policy is unnecessary. |
 | Missing/invalid environment | Compare `.env` with `.env.example`; production requires Supabase values. |
-| Port 5000 in use | Stop the conflicting process or choose another valid `PORT`. |
+| Port 5000 in use | Identify its owner before stopping anything, or choose another valid `PORT`. |
+| Port 8000 in use | Identify its owner before stopping anything, or use a temporary FastAPI port and update the private backend model-service URL. |
+| Ollama port 11434 unavailable | Check the Ollama application/service and `Invoke-RestMethod http://127.0.0.1:11434/api/tags`; do not start a duplicate server. |
+| `qwen3:4b-instruct` missing | Confirm with `ollama list`, then manually run `ollama pull qwen3:4b-instruct`. |
+| Internal API returns 401 | Confirm the ignored backend and model-service `MODEL_SERVICE_API_KEY` values match. Never print either value. |
 | CORS 403 | Add the exact frontend origin, with no path/trailing slash/wildcard. |
 | HTTP 401 | Refresh the Supabase session and send its access token. |
 | HTTP 403 | Check ownership and RLS; do not use another user's IDs. |
-| HTTP 409 | Check duplicate saves/applications, profile requirements, or status transition. |
+| HTTP 409 `PROFILE_REQUIRED` | Complete the required profile fields before matching or readiness; other 409 responses may indicate duplicate resources or invalid status transitions. |
 | HTTP 422 | Compare JSON/query fields with OpenAPI; unknown fields are rejected. |
 | HTTP 429 | Wait for the 15-minute in-memory window. |
 | `AI_NOT_CONFIGURED` | Expected while globally disabled, when an approved feature is absent from either allowlist, or for deferred cover-letter/essay routes. Do not fabricate fallback output. |
 | `AI_SERVICE_UNAVAILABLE` / `AI_TIMEOUT` | Start/check the private model service and confirm the backend-only URL/key configuration. |
+| AI HTTP 502/503/504 | Check strict model output, FastAPI/Ollama availability, and timeout logs using request IDs; responses remain sanitized. |
+| Slow CPU generation | Wait for the documented timeout, avoid concurrent requests, and keep a loading state visible. |
 | Supabase link failure | Confirm project ref, login, network, and account access. |
 | Docker warning | Needed for local Supabase only, not linked cloud commands. |
 | Migration mismatch | Run `migration list`, inspect history, and never repair blindly. |
@@ -411,7 +440,7 @@ No deployment is performed in this phase. Proposed project settings:
 - Production branch: `main`
 - Preview/UAT branch: `uat`
 - Node.js: 22
-- Install: `pnpm install --frozen-lockfile`
+- Install: `pnpm.cmd install --frozen-lockfile`
 - Build/output directory: none for zero-configuration Express detection
 - Health endpoint: `/api/v1/health`
 - Exact stable frontend origin in `CORS_ORIGINS`
@@ -437,3 +466,12 @@ The app has a default export for deployment preparation, but Vercel behavior rem
 - [ ] Matching returns either the expected ranked response when custom is enabled or `AI_NOT_CONFIGURED` when disabled
 - [ ] Enabled matching, summary, readiness, and CV endpoints return strict responses; deferred cover-letter and essay endpoints return `AI_NOT_CONFIGURED`
 - [ ] No credentials, tokens, passwords, or service-role keys committed
+
+To stop local processes safely, close the two terminals that started FastAPI and Express or press Ctrl+C in each. If the originating terminal is unavailable, identify the owner first:
+
+```powershell
+Get-NetTCPConnection -State Listen | Where-Object LocalPort -In 5000,8000 | Select-Object LocalPort,OwningProcess
+Get-Process -Id <OWNING_PROCESS_ID>
+```
+
+Only after confirming it is the process you started should you run `Stop-Process -Id <OWNING_PROCESS_ID>`. Do not stop the Ollama Windows application/service or any unrelated Node/Python process merely because it has a familiar name.
