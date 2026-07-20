@@ -43,17 +43,18 @@ function setupSettingsHandling() {
   const btnSettingsTrigger = document.getElementById('btn-settings-trigger');
   const authConfigTrigger = document.getElementById('auth-config-trigger');
   
-  // Load existing credentials from localStorage
-  const existingUrl = localStorage.getItem('supabase_url');
-  const existingKey = localStorage.getItem('supabase_anon_key');
-  const existingApi = localStorage.getItem('ascent_api_url');
+  // Load existing credentials from localStorage or environment variables
+  const existingUrl = localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || '';
+  const existingKey = localStorage.getItem('supabase_anon_key') || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  const existingApi = localStorage.getItem('ascent_api_url') || import.meta.env.VITE_API_URL || '';
   
   if (existingUrl) document.getElementById('setting-supabase-url').value = existingUrl;
   if (existingKey) document.getElementById('setting-supabase-key').value = existingKey;
   if (existingApi) document.getElementById('setting-api-url').value = existingApi;
   
-  // If credentials aren't set, force keep the modal open and hide close button
-  if (!existingUrl || !existingKey) {
+  // If credentials aren't set (neither in localStorage nor env), force keep the modal open and hide close button
+  const client = getSupabase();
+  if (!client) {
     settingsModal.style.display = 'flex';
     closeSettingsBtn.style.display = 'none';
   } else {
