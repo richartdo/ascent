@@ -1,0 +1,1684 @@
+import './style.css';
+import { getSupabase, initializeSupabase } from './supabaseClient.js';
+import { api, getApiBaseUrl, saveApiBaseUrl } from './api.js';
+
+// Core State variables
+let activeView = 'dashboard';
+let authTab = 'login';
+let currentUserId = null;
+let notiPollInterval = null;
+let profileCompletion = 0;
+
+// Opportunities Search Page parameters
+let currentOpPage = 1;
+let totalOpPages = 1;
+const OP_LIMIT = 9;
+
+// Active application cache for checklist operations
+let activeEditingApplication = null;
+
+// Initial bootstrap run
+window.addEventListener('DOMContentLoaded', () => {
+  setupSettingsHandling();
+  setupAuthHandling();
+  setupViewRouting();
+  setupProfileHandling();
+  setupOpportunitiesHandling();
+  setupSavedHandling();
+  setupApplicationsHandling();
+  setupAiHubHandling();
+  setupNotificationsHandling();
+  
+  // Try checking auth status immediately
+  checkAuthSession();
+});
+
+/* =============================================================================
+   1. Dynamic Settings Configuration (Client Credentials Setup)
+   ============================================================================= */
+function setupSettingsHandling() {
+  const settingsModal = document.getElementById('settings-modal');
+  const settingsForm = document.getElementById('settings-form');
+  const closeSettingsBtn = document.getElementById('close-settings-btn');
+  const btnSettingsTrigger = document.getElementById('btn-settings-trigger');
+  const authConfigTrigger = document.getElementById('auth-config-trigger');
+  
+  // Load existing credentials from localStorage
+  const existingUrl = localStorage.getItem('supabase_url');
+  const existingKey = localStorage.getItem('supabase_anon_key');
+  const existingApi = localStorage.getItem('ascent_api_url');
+  
+  if (existingUrl) document.getElementById('setting-supabase-url').value = existingUrl;
+  if (existingKey) document.getElementById('setting-supabase-key').value = existingKey;
+  if (existingApi) document.getElementById('setting-api-url').value = existingApi;
+  
+  // If credentials aren't set, force keep the modal open and hide close button
+  if (!existingUrl || !existingKey) {
+    settingsModal.style.display = 'flex';
+    closeSettingsBtn.style.display = 'none';
+  } else {
+    settingsModal.style.display = 'none';
+    closeSettingsBtn.style.display = 'block';
+  }
+  
+  // Form Submit handler
+  settingsForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const apiUrl = document.getElementById('setting-api-url').value.trim();
+    const supabaseUrl = document.getElementById('setting-supabase-url').value.trim();
+    const supabaseKey = document.getElementById('setting-supabase-key').value.trim();
+    
+    try {
+      saveApiBaseUrl(apiUrl);
+      initializeSupabase(supabaseUrl, supabaseKey);
+      
+      // Success - let's verify if client works
+      const client = getSupabase();
+      if (client) {
+        settingsModal.style.display = 'none';
+        closeSettingsBtn.style.display = 'block';
+        alert('Credentials saved! Checking health connection...');
+        checkBackendHealth();
+        checkAuthSession();
+      } else {
+        alert('Could not initialize Supabase client. Check your settings.');
+      }
+    } catch (err) {
+      alert(`Initialization Error: ${err.message}`);
+    }
+  });
+  
+  // Close triggers
+  closeSettingsBtn.addEventListener('click', () => {
+    settingsModal.style.display = 'none';
+  });
+  
+  btnSettingsTrigger.addEventListener('click', () => {
+    settingsModal.style.display = 'flex';
+    closeSettingsBtn.style.display = 'block';
+  });
+  
+  authConfigTrigger.addEventListener('click', () => {
+    settingsModal.style.display = 'flex';
+    closeSettingsBtn.style.display = 'block';
+  });
+}
+
+// Check Backend Health Connection
+async function checkBackendHealth() {
+  const statusIndicator = document.getElementById('connection-status');
+  try {
+    const health = await api.getHealth();
+    if (health?.data?.status === 'ok') {
+      statusIndicator.className = 'settings-indicator connected';
+      statusIndicator.innerHTML = '<i class="fa-solid fa-link"></i> API Online';
+    } else {
+      throw new Error('Invalid status');
+    }
+  } catch (e) {
+    statusIndicator.className = 'settings-indicator disconnected';
+    statusIndicator.innerHTML = '<i class="fa-solid fa-link-slash"></i> API Offline';
+    console.error('Express Backend healthcheck failed:', e);
+  }
+}
+
+/* =============================================================================
+   2. Authentication Session Lifecycle
+   ============================================================================= */
+function setupAuthHandling() {
+  const authForm = document.getElementById('auth-form');
+  const authTabLogin = document.getElementById('auth-tab-login');
+  const authTabSignup = document.getElementById('auth-tab-signup');
+  const signupNameGroup = document.getElementById('signup-name-group');
+  const authSubmitBtn = document.getElementById('auth-submit-btn');
+  const logoutBtn = document.getElementById('logout-btn');
+  
+  // Tab toggles
+  authTabLogin.addEventListener('click', () => {
+    authTab = 'login';
+    authTabLogin.className = 'auth-tab active';
+    authTabSignup.className = 'auth-tab';
+    signupNameGroup.style.display = 'none';
+    document.getElementById('auth-fullname').removeAttribute('required');
+    authSubmitBtn.innerHTML = '<i class="fa-solid fa-right-to-bracket"></i> Log In';
+  });
+  
+  authTabSignup.addEventListener('click', () => {
+    authTab = 'signup';
+    authTabSignup.className = 'auth-tab active';
+    authTabLogin.className = 'auth-tab';
+    signupNameGroup.style.display = 'block';
+    document.getElementById('auth-fullname').setAttribute('required', 'true');
+    authSubmitBtn.innerHTML = '<i class="fa-solid fa-user-plus"></i> Sign Up';
+  });
+  
+  // Submit Form
+  authForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const fullname = document.getElementById('auth-fullname').value.trim();
+    const errorAlert = document.getElementById('auth-error-alert');
+    const errorMsg = document.getElementById('auth-error-msg');
+    
+    errorAlert.style.display = 'none';
+    authSubmitBtn.disabled = true;
+    
+    const supabase = getSupabase();
+    if (!supabase) {
+      errorMsg.textContent = 'Supabase client is not configured. Please click settings.';
+      errorAlert.style.display = 'flex';
+      authSubmitBtn.disabled = false;
+      return;
+    }
+    
+    try {
+      if (authTab === 'login') {
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+        handleAuthSuccess(data.user);
+      } else {
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { full_name: fullname }
+          }
+        });
+        if (error) throw error;
+        alert('Registration successful! Please log in with your credentials.');
+        authTabLogin.click();
+      }
+    } catch (err) {
+      errorMsg.textContent = err.message || 'Authentication failed.';
+      errorAlert.style.display = 'flex';
+    } finally {
+      authSubmitBtn.disabled = false;
+    }
+  });
+  
+  // Log out action
+  logoutBtn.addEventListener('click', async () => {
+    const supabase = getSupabase();
+    if (supabase) {
+      await supabase.auth.signOut();
+    }
+    handleLogout();
+  });
+}
+
+// Verify session checks on boot
+async function checkAuthSession() {
+  const supabase = getSupabase();
+  if (!supabase) {
+    handleLogout();
+    return;
+  }
+  
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.user) {
+    handleAuthSuccess(session.user);
+  } else {
+    handleLogout();
+  }
+}
+
+function handleAuthSuccess(user) {
+  currentUserId = user.id;
+  document.getElementById('auth-container').style.display = 'none';
+  document.getElementById('app-shell').style.display = 'block';
+  
+  // Fill sidebar details
+  document.getElementById('sidebar-user-name').textContent = user.user_metadata?.full_name || user.email;
+  document.getElementById('sidebar-user-initials').textContent = (user.user_metadata?.full_name || user.email).charAt(0).toUpperCase();
+  
+  // Launch loops and notifications counts
+  checkBackendHealth();
+  refreshNotificationsCount();
+  notiPollInterval = setInterval(refreshNotificationsCount, 60000);
+  
+  // Fetch profile to calculate derived values
+  loadProfileData();
+  
+  // Navigate to Dashboard
+  navigateTo('dashboard');
+}
+
+function handleLogout() {
+  currentUserId = null;
+  if (notiPollInterval) {
+    clearInterval(notiPollInterval);
+    notiPollInterval = null;
+  }
+  document.getElementById('app-shell').style.display = 'none';
+  document.getElementById('auth-container').style.display = 'flex';
+}
+
+/* =============================================================================
+   3. View Router & Navigation Orchestration
+   ============================================================================= */
+function setupViewRouting() {
+  const menuItems = document.querySelectorAll('.sidebar-menu .menu-item');
+  
+  menuItems.forEach(item => {
+    item.addEventListener('click', (e) => {
+      e.preventDefault();
+      const targetView = item.getAttribute('data-view');
+      navigateTo(targetView);
+    });
+  });
+  
+  // Hash routing triggers
+  window.addEventListener('hashchange', () => {
+    const hash = window.location.hash.substring(1);
+    const validViews = ['dashboard', 'opportunities', 'saved', 'applications', 'profile', 'ai'];
+    if (validViews.includes(hash)) {
+      navigateTo(hash);
+    }
+  });
+}
+
+function navigateTo(viewName) {
+  if (!currentUserId) return;
+  activeView = viewName;
+  
+  // Update view panel classes
+  document.querySelectorAll('.content-pane').forEach(pane => {
+    pane.classList.remove('active');
+  });
+  const activePane = document.getElementById(`view-${viewName}`);
+  if (activePane) activePane.classList.add('active');
+  
+  // Update menu links
+  document.querySelectorAll('.sidebar-menu .menu-item').forEach(item => {
+    item.classList.remove('active');
+    if (item.getAttribute('data-view') === viewName) {
+      item.classList.add('active');
+    }
+  });
+  
+  // Set navbar title
+  const viewTitles = {
+    dashboard: 'Dashboard',
+    opportunities: 'Opportunities Discovery',
+    saved: 'Saved Opportunities',
+    applications: 'Application Tracker',
+    profile: 'Profile Settings',
+    ai: 'AI Career Assistant'
+  };
+  document.getElementById('page-title').textContent = viewTitles[viewName] || 'Dashboard';
+  window.location.hash = viewName;
+  
+  // View specific load actions
+  if (viewName === 'dashboard') loadDashboardView();
+  else if (viewName === 'opportunities') loadOpportunitiesView();
+  else if (viewName === 'saved') loadSavedView();
+  else if (viewName === 'applications') loadApplicationsView();
+  else if (viewName === 'profile') loadProfileView();
+  else if (viewName === 'ai') loadAiHubView();
+}
+
+/* =============================================================================
+   4. Personal Profile Manager
+   ============================================================================= */
+function setupProfileHandling() {
+  const form = document.getElementById('profile-form');
+  
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const successAlert = document.getElementById('profile-success-alert');
+    const errorAlert = document.getElementById('profile-error-alert');
+    const errorMsg = document.getElementById('profile-error-msg');
+    
+    successAlert.style.display = 'none';
+    errorAlert.style.display = 'none';
+    
+    // Parse comma lists
+    const skills = document.getElementById('prof-skills').value.split(',').map(s => s.trim()).filter(Boolean);
+    const interests = document.getElementById('prof-interests').value.split(',').map(i => i.trim()).filter(Boolean);
+    const locations = document.getElementById('prof-locations').value.split(',').map(l => l.trim()).filter(Boolean);
+    
+    // Gather types checkboxes
+    const types = [];
+    document.querySelectorAll('input[name="prof-op-types"]:checked').forEach(cb => {
+      types.push(cb.value);
+    });
+    
+    const profilePayload = {
+      fullName: document.getElementById('prof-fullname').value.trim() || null,
+      persona: document.getElementById('prof-persona').value || null,
+      countryCode: document.getElementById('prof-country').value.trim().toUpperCase() || null,
+      city: document.getElementById('prof-city').value.trim() || null,
+      educationLevel: document.getElementById('prof-education').value || null,
+      institution: document.getElementById('prof-institution').value.trim() || null,
+      fieldOfStudy: document.getElementById('prof-field').value.trim() || null,
+      graduationYear: document.getElementById('prof-gradyear').value ? parseInt(document.getElementById('prof-gradyear').value, 10) : null,
+      skills: skills,
+      interests: interests,
+      careerGoals: document.getElementById('prof-career').value.trim() || null,
+      preferredOpportunityTypes: types,
+      preferredLocations: locations,
+      remotePreference: document.getElementById('prof-remote').value || null,
+    };
+    
+    try {
+      const result = await api.updateProfile(profilePayload);
+      successAlert.style.display = 'block';
+      
+      // Update completeness
+      if (result?.data) {
+        profileCompletion = result.data.profileCompletion;
+        updateProfileBadges(result.data);
+      }
+      setTimeout(() => { successAlert.style.display = 'none'; }, 5000);
+    } catch (err) {
+      errorMsg.textContent = err.message || 'Failed to update profile details.';
+      errorAlert.style.display = 'block';
+    }
+  });
+}
+
+async function loadProfileData() {
+  try {
+    const res = await api.getProfile();
+    if (res?.data) {
+      profileCompletion = res.data.profileCompletion || 0;
+      updateProfileBadges(res.data);
+    }
+  } catch (e) {
+    console.error('Error pre-loading profile:', e);
+  }
+}
+
+function updateProfileBadges(profile) {
+  // Complete displays
+  const percentText = `${profile.profileCompletion || 0}%`;
+  document.getElementById('profile-completeness-badge').textContent = `Completeness: ${percentText}`;
+  document.getElementById('dash-completion-val').textContent = percentText;
+  document.getElementById('dash-completion-bar').style.width = percentText;
+  
+  if (profile.persona) {
+    const roles = { student: 'Student', recent_graduate: 'Recent Graduate', young_founder: 'Young Founder' };
+    document.getElementById('sidebar-user-persona').textContent = roles[profile.persona] || 'Profile Active';
+  } else {
+    document.getElementById('sidebar-user-persona').textContent = 'Setup Profile...';
+  }
+}
+
+async function loadProfileView() {
+  try {
+    const res = await api.getProfile();
+    const data = res?.data || {};
+    
+    document.getElementById('prof-fullname').value = data.fullName || '';
+    document.getElementById('prof-persona').value = data.persona || '';
+    document.getElementById('prof-country').value = data.countryCode || '';
+    document.getElementById('prof-city').value = data.city || '';
+    document.getElementById('prof-education').value = data.educationLevel || '';
+    document.getElementById('prof-institution').value = data.institution || '';
+    document.getElementById('prof-field').value = data.fieldOfStudy || '';
+    document.getElementById('prof-gradyear').value = data.graduationYear || '';
+    document.getElementById('prof-skills').value = (data.skills || []).join(', ');
+    document.getElementById('prof-interests').value = (data.interests || []).join(', ');
+    document.getElementById('prof-career').value = data.careerGoals || '';
+    document.getElementById('prof-remote').value = data.remotePreference || '';
+    document.getElementById('prof-locations').value = (data.preferredLocations || []).join(', ');
+    
+    // Clear types and check relevant
+    document.querySelectorAll('input[name="prof-op-types"]').forEach(cb => {
+      cb.checked = (data.preferredOpportunityTypes || []).includes(cb.value);
+    });
+    
+    updateProfileBadges(data);
+  } catch (err) {
+    console.error('Could not load profile details.', err);
+  }
+}
+
+/* =============================================================================
+   5. Opportunity Explorer View
+   ============================================================================= */
+function setupOpportunitiesHandling() {
+  const searchInput = document.getElementById('filter-search');
+  const typeSelect = document.getElementById('filter-type');
+  const countryInput = document.getElementById('filter-country');
+  const locationSelect = document.getElementById('filter-location-mode');
+  const sortSelect = document.getElementById('filter-sort');
+  
+  const triggers = [typeSelect, locationSelect, sortSelect];
+  triggers.forEach(el => {
+    el.addEventListener('change', () => {
+      currentOpPage = 1;
+      loadOpportunitiesView();
+    });
+  });
+  
+  // Search with enter key
+  searchInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      currentOpPage = 1;
+      loadOpportunitiesView();
+    }
+  });
+  
+  // Country with enter key
+  countryInput.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+      currentOpPage = 1;
+      loadOpportunitiesView();
+    }
+  });
+  
+  // Pagination keys
+  document.getElementById('btn-page-prev').addEventListener('click', () => {
+    if (currentOpPage > 1) {
+      currentOpPage--;
+      loadOpportunitiesView();
+    }
+  });
+  
+  document.getElementById('btn-page-next').addEventListener('click', () => {
+    if (currentOpPage < totalOpPages) {
+      currentOpPage++;
+      loadOpportunitiesView();
+    }
+  });
+  
+  // Details Modal close
+  document.getElementById('close-op-details').addEventListener('click', () => {
+    document.getElementById('opportunity-details-modal').style.display = 'none';
+  });
+}
+
+async function loadOpportunitiesView() {
+  const grid = document.getElementById('opportunities-grid');
+  const loading = document.getElementById('opportunities-loading');
+  
+  grid.innerHTML = '';
+  loading.style.display = 'flex';
+  
+  const searchVal = document.getElementById('filter-search').value.trim();
+  const typeVal = document.getElementById('filter-type').value;
+  const countryVal = document.getElementById('filter-country').value.trim().toUpperCase();
+  const locationVal = document.getElementById('filter-location-mode').value;
+  const sortVal = document.getElementById('filter-sort').value;
+  
+  const params = {
+    page: currentOpPage,
+    limit: OP_LIMIT,
+    sort: sortVal
+  };
+  
+  if (searchVal && searchVal.length >= 2) params.q = searchVal;
+  if (typeVal) params.type = typeVal;
+  if (countryVal && countryVal.length === 2) params.country = countryVal;
+  if (locationVal) params.locationMode = locationVal;
+  
+  try {
+    const res = await api.getOpportunities(params);
+    grid.innerHTML = '';
+    loading.style.display = 'none';
+    
+    if (!res.data || res.data.length === 0) {
+      grid.innerHTML = '<p class="text-muted" style="grid-column: 1/-1; text-align: center; padding: 40px 0;">No matching opportunities found.</p>';
+      totalOpPages = 1;
+      document.getElementById('op-page-num').textContent = 'Page 1 of 1';
+      return;
+    }
+    
+    // Update pagination count
+    totalOpPages = res.meta?.totalPages || 1;
+    document.getElementById('op-page-num').textContent = `Page ${currentOpPage} of ${totalOpPages}`;
+    
+    res.data.forEach(op => {
+      const card = createOpportunityCard(op);
+      grid.appendChild(card);
+    });
+  } catch (err) {
+    loading.style.display = 'none';
+    grid.innerHTML = `<div class="alert alert-danger" style="grid-column: 1/-1;"><i class="fa-solid fa-triangle-exclamation"></i> Error loading opportunities: ${err.message}</div>`;
+  }
+}
+
+function createOpportunityCard(op, isSavedList = false, savedNotes = null) {
+  const card = document.createElement('div');
+  card.className = 'glass-panel opportunity-card';
+  
+  const formattedDeadline = op.deadline 
+    ? new Date(op.deadline).toLocaleDateString(undefined, { dateStyle: 'medium' }) 
+    : 'Rolling Deadline';
+    
+  card.innerHTML = `
+    <div class="op-header">
+      <span class="badge ${getBadgeClassForType(op.type)}">${op.type}</span>
+      <span class="badge" style="background: rgba(255,255,255,0.03); border-color: var(--border-light);">${op.locationMode}</span>
+    </div>
+    <div class="op-org">${op.organization}</div>
+    <div class="op-title" data-id="${op.id}">${op.title}</div>
+    <div class="op-desc">${op.description}</div>
+    
+    ${isSavedList ? `
+      <div style="margin-bottom: 14px;">
+        <label class="form-label" style="font-size: 0.75rem; margin-bottom: 4px;">My Notes:</label>
+        <textarea class="form-control saved-notes-box" data-id="${op.id}" style="height: 60px; padding: 6px 10px; font-size: 0.8rem; resize: none;" placeholder="Add notes (deadlines, essay tasks...)" maxlength="2000">${savedNotes || ''}</textarea>
+        <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
+          <button class="btn btn-secondary btn-link btn-save-notes" data-id="${op.id}" style="font-size: 0.7rem;"><i class="fa-solid fa-floppy-disk"></i> Update Notes</button>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="op-footer">
+      <div class="op-deadline"><i class="fa-solid fa-calendar-days"></i> ${formattedDeadline}</div>
+      <div class="op-actions">
+        <button class="btn btn-secondary btn-icon btn-save-op" data-id="${op.id}" title="Bookmark opportunity">
+          <i class="${isSavedList ? 'fa-solid fa-bookmark' : 'fa-regular fa-bookmark'}"></i>
+        </button>
+        <button class="btn btn-primary btn-track-op" data-id="${op.id}" style="padding: 6px 12px; font-size: 0.8rem;">
+          <i class="fa-solid fa-plus"></i> Track
+        </button>
+      </div>
+    </div>
+  `;
+  
+  // Attach listeners
+  card.querySelector('.op-title').addEventListener('click', () => showOpportunityDetails(op.id));
+  
+  const saveBtn = card.querySelector('.btn-save-op');
+  saveBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try {
+      if (isSavedList || saveBtn.querySelector('i').className.includes('fa-solid')) {
+        await api.unsaveOpportunity(op.id);
+        if (isSavedList) {
+          loadSavedView();
+        } else {
+          saveBtn.querySelector('i').className = 'fa-regular fa-bookmark';
+        }
+      } else {
+        await api.saveOpportunity(op.id);
+        saveBtn.querySelector('i').className = 'fa-solid fa-bookmark';
+      }
+    } catch (err) {
+      alert(`Bookmark action failed: ${err.message}`);
+    }
+  });
+  
+  card.querySelector('.btn-track-op').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openApplicationCreator(op.id, op.title);
+  });
+  
+  if (isSavedList) {
+    card.querySelector('.btn-save-notes').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const notes = card.querySelector('.saved-notes-box').value.trim();
+      try {
+        await api.updateSavedOpportunityNotes(op.id, notes || null);
+        alert('Notes updated successfully!');
+      } catch (err) {
+        alert(`Failed to save notes: ${err.message}`);
+      }
+    });
+  }
+  
+  return card;
+}
+
+function getBadgeClassForType(type) {
+  const classes = {
+    scholarship: 'badge-primary',
+    internship: 'badge-secondary',
+    job: 'badge-success',
+    grant: 'badge-warning',
+    fellowship: 'badge-primary',
+    competition: 'badge-danger',
+    accelerator: 'badge-danger',
+    hackathon: 'badge-danger',
+    training: 'badge-secondary'
+  };
+  return classes[type] || 'badge-secondary';
+}
+
+/* =============================================================================
+   6. Opportunity Detail Modal & AI Actions
+   ============================================================================= */
+async function showOpportunityDetails(id) {
+  const modal = document.getElementById('opportunity-details-modal');
+  const aiResultBlock = document.getElementById('modal-ai-result-block');
+  const aiContent = document.getElementById('modal-ai-content');
+  
+  // Clear previous AI views
+  aiResultBlock.style.display = 'none';
+  aiContent.innerHTML = '';
+  
+  try {
+    const res = await api.getOpportunity(id);
+    const op = res.data;
+    
+    document.getElementById('modal-op-type').className = `badge ${getBadgeClassForType(op.type)}`;
+    document.getElementById('modal-op-type').textContent = op.type;
+    document.getElementById('modal-op-title').textContent = op.title;
+    document.getElementById('modal-op-org').textContent = op.organization;
+    document.getElementById('modal-op-desc').textContent = op.description;
+    
+    // Requirements
+    const reqsList = document.getElementById('modal-op-reqs');
+    reqsList.innerHTML = '';
+    if (op.requirements && op.requirements.length > 0) {
+      op.requirements.forEach(r => {
+        const li = document.createElement('li');
+        li.textContent = r;
+        reqsList.appendChild(li);
+      });
+    } else {
+      reqsList.innerHTML = '<li class="text-subtle">No formal eligibility criteria listed.</li>';
+    }
+    
+    // Benefits
+    const benefitsList = document.getElementById('modal-op-benefits');
+    benefitsList.innerHTML = '';
+    if (op.benefits && op.benefits.length > 0) {
+      op.benefits.forEach(b => {
+        const li = document.createElement('li');
+        li.textContent = b;
+        benefitsList.appendChild(li);
+      });
+    } else {
+      benefitsList.innerHTML = '<li class="text-subtle">No financial benefits described.</li>';
+    }
+    
+    document.getElementById('modal-op-locmode').textContent = op.locationMode;
+    document.getElementById('modal-op-location').textContent = op.location || 'N/A';
+    
+    const formattedDeadline = op.deadline 
+      ? new Date(op.deadline).toLocaleDateString(undefined, { dateStyle: 'medium' }) 
+      : 'Rolling Deadline';
+    document.getElementById('modal-op-deadline').textContent = formattedDeadline;
+    
+    document.getElementById('modal-op-source').textContent = op.sourceName || 'Link';
+    document.getElementById('modal-op-source').href = op.sourceUrl || '#';
+    document.getElementById('modal-btn-apply').href = op.applicationUrl || '#';
+    
+    // Setup Action click overrides
+    const saveBtn = document.getElementById('modal-btn-save');
+    const trackBtn = document.getElementById('modal-btn-track');
+    
+    // Refresh bookmark state by querying saved opportunities
+    let isSaved = false;
+    try {
+      const savedRes = await api.getSavedOpportunities();
+      isSaved = (savedRes.data || []).some(item => item.opportunityId === op.id);
+    } catch (e) {}
+    
+    saveBtn.innerHTML = isSaved ? '<i class="fa-solid fa-bookmark"></i> Bookmarked' : '<i class="fa-regular fa-bookmark"></i> Save Item';
+    
+    // Detach and replace listeners to prevent stacking closures
+    const newSaveBtn = saveBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+    newSaveBtn.addEventListener('click', async () => {
+      try {
+        if (isSaved) {
+          await api.unsaveOpportunity(op.id);
+          newSaveBtn.innerHTML = '<i class="fa-regular fa-bookmark"></i> Save Item';
+          isSaved = false;
+        } else {
+          await api.saveOpportunity(op.id);
+          newSaveBtn.innerHTML = '<i class="fa-solid fa-bookmark"></i> Bookmarked';
+          isSaved = true;
+        }
+      } catch (err) {
+        alert(err.message);
+      }
+    });
+    
+    const newTrackBtn = trackBtn.cloneNode(true);
+    trackBtn.parentNode.replaceChild(newTrackBtn, trackBtn);
+    newTrackBtn.addEventListener('click', () => {
+      modal.style.display = 'none';
+      openApplicationCreator(op.id, op.title);
+    });
+    
+    // Setup Inline AI Assistant buttons inside modal
+    setupInlineAiButtons(op.id);
+    
+    modal.style.display = 'flex';
+  } catch (err) {
+    alert(`Could not load opportunity detail: ${err.message}`);
+  }
+}
+
+function setupInlineAiButtons(opportunityId) {
+  const btnSummary = document.getElementById('btn-modal-summary');
+  const btnReadiness = document.getElementById('btn-modal-readiness');
+  
+  const newBtnSummary = btnSummary.cloneNode(true);
+  btnSummary.parentNode.replaceChild(newBtnSummary, btnSummary);
+  newBtnSummary.addEventListener('click', () => runInlineAiAction(opportunityId, 'summary'));
+  
+  const newBtnReadiness = btnReadiness.cloneNode(true);
+  btnReadiness.parentNode.replaceChild(newBtnReadiness, btnReadiness);
+  newBtnReadiness.addEventListener('click', () => runInlineAiAction(opportunityId, 'readiness'));
+}
+
+async function runInlineAiAction(opportunityId, type) {
+  const aiResultBlock = document.getElementById('modal-ai-result-block');
+  const aiLoading = document.getElementById('modal-ai-loading');
+  const aiLoadingText = document.getElementById('modal-ai-loading-text');
+  const aiContent = document.getElementById('modal-ai-content');
+  
+  aiContent.innerHTML = '';
+  aiResultBlock.style.display = 'block';
+  aiLoading.style.display = 'flex';
+  aiLoadingText.textContent = type === 'summary' ? 'Generating concise summary using Qwen model...' : 'Calculating preparation readiness indicators...';
+  
+  try {
+    if (type === 'summary') {
+      const res = await api.getAiOpportunitySummary(opportunityId);
+      const sum = res.data.summary;
+      
+      aiLoading.style.display = 'none';
+      aiContent.innerHTML = `
+        <h4 style="color: var(--secondary); margin-bottom: 8px;"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Summary</h4>
+        <p style="font-size: 0.85rem; line-height: 1.5; margin-bottom: 12px;">${sum.summary}</p>
+        <div style="font-size: 0.8rem; margin-bottom: 10px;">
+          <strong>Eligibility Highlights:</strong>
+          <ul style="padding-left: 18px; margin-top: 4px;">
+            ${sum.eligibilityHighlights.map(h => `<li>${h}</li>`).join('')}
+          </ul>
+        </div>
+        <div style="font-size: 0.8rem; margin-bottom: 10px;">
+          <strong>Benefits Outline:</strong>
+          <ul style="padding-left: 18px; margin-top: 4px;">
+            ${sum.benefits.map(b => `<li>${b}</li>`).join('')}
+          </ul>
+        </div>
+        ${sum.missingInformation?.length > 0 ? `
+          <div style="font-size: 0.8rem; margin-bottom: 10px; color: var(--accent);">
+            <strong>Missing Info Notes:</strong>
+            <ul style="padding-left: 18px; margin-top: 4px;">
+              ${sum.missingInformation.map(m => `<li>${m}</li>`).join('')}
+            </ul>
+          </div>
+        ` : ''}
+        <span class="text-subtle" style="font-size: 0.65rem; display: block; margin-top: 10px;">${sum.disclaimer}</span>
+      `;
+    } else {
+      const res = await api.getAiOpportunityReadiness(opportunityId);
+      const read = res.data.readiness;
+      
+      aiLoading.style.display = 'none';
+      aiContent.innerHTML = `
+        <h4 style="color: var(--secondary); margin-bottom: 14px;"><i class="fa-solid fa-gauge-high"></i> Readiness Assessment</h4>
+        
+        <div style="display: flex; gap: 20px; align-items: center; margin-bottom: 16px;">
+          <div class="ai-score-ring" style="margin: 0; flex-shrink: 0;">
+            <div class="ai-score-val" style="color: ${read.readinessScore >= 70 ? 'var(--success)' : 'var(--accent)'}">${read.readinessScore}</div>
+            <div class="ai-score-label">Points</div>
+          </div>
+          <div>
+            <div style="font-weight: 700; font-size: 0.95rem; text-transform: uppercase;">
+              ${read.assessment.replace('_', ' ')} (Eligibility: <span class="accent-text">${read.eligibilityAssessment}</span>)
+            </div>
+            <p class="text-muted" style="font-size: 0.8rem; margin-top: 4px;">${read.explanation}</p>
+          </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; font-size: 0.8rem;">
+          <div class="ai-analysis-list strengths">
+            <strong>Key Strengths</strong>
+            <ul>${read.strengths.map(s => `<li>${s}</li>`).join('')}</ul>
+          </div>
+          <div class="ai-analysis-list gaps">
+            <strong>Identified Gaps</strong>
+            <ul>${read.gaps.map(g => `<li>${g}</li>`).join('')}</ul>
+          </div>
+        </div>
+
+        <div class="ai-analysis-list actions" style="font-size: 0.8rem; margin-top: 14px;">
+          <strong>Recommended Checklist Actions</strong>
+          <ul>${read.actions.map(a => `<li>${a}</li>`).join('')}</ul>
+        </div>
+        
+        <span class="text-subtle" style="font-size: 0.65rem; display: block; margin-top: 14px;">${read.disclaimer}</span>
+      `;
+    }
+  } catch (err) {
+    aiLoading.style.display = 'none';
+    if (err.statusCode === 503 || err.code === 'AI_NOT_CONFIGURED') {
+      aiContent.innerHTML = `
+        <div class="alert alert-danger" style="margin: 0;">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          <div>
+            <strong>AI Service Unavailable:</strong> AI features are disabled on this environment instance. General search actions are online.
+          </div>
+        </div>
+      `;
+    } else {
+      aiContent.innerHTML = `
+        <div class="alert alert-danger" style="margin: 0;">
+          <i class="fa-solid fa-triangle-exclamation"></i> Error querying model service: ${err.message}
+        </div>
+      `;
+    }
+  }
+}
+
+/* =============================================================================
+   7. Saved Opportunities View
+   ============================================================================= */
+function setupSavedHandling() {
+  // Empty - card bindings handle actions
+}
+
+async function loadSavedView() {
+  const grid = document.getElementById('saved-grid');
+  const loading = document.getElementById('saved-loading');
+  
+  grid.innerHTML = '';
+  loading.style.display = 'flex';
+  
+  try {
+    const savedRes = await api.getSavedOpportunities();
+    grid.innerHTML = '';
+    loading.style.display = 'none';
+    
+    if (!savedRes.data || savedRes.data.length === 0) {
+      grid.innerHTML = '<p class="text-muted" style="grid-column: 1/-1; text-align: center; padding: 40px 0;">No saved opportunities found. Browse the opportunities portal to save items.</p>';
+      return;
+    }
+    
+    // Fetch opportunities detailed context for all saved items
+    const opsPromises = savedRes.data.map(item => api.getOpportunity(item.opportunityId));
+    const opsResults = await Promise.all(opsPromises);
+    
+    savedRes.data.forEach((item, index) => {
+      const opDetail = opsResults[index].data;
+      const card = createOpportunityCard(opDetail, true, item.notes);
+      grid.appendChild(card);
+    });
+  } catch (err) {
+    loading.style.display = 'none';
+    grid.innerHTML = `<div class="alert alert-danger" style="grid-column: 1/-1;"><i class="fa-solid fa-triangle-exclamation"></i> Error loading saved bookmarks: ${err.message}</div>`;
+  }
+}
+
+/* =============================================================================
+   8. Application Tracker (Kanban Pipeline & Checklists)
+   ============================================================================= */
+function setupApplicationsHandling() {
+  const appEditorModal = document.getElementById('application-editor-modal');
+  const appEditorForm = document.getElementById('app-editor-form');
+  const closeAppEditor = document.getElementById('close-app-editor');
+  const addChecklistForm = document.getElementById('checklist-add-form');
+  const deleteTrackerBtn = document.getElementById('btn-delete-tracker');
+  
+  closeAppEditor.addEventListener('click', () => {
+    appEditorModal.style.display = 'none';
+    activeEditingApplication = null;
+  });
+  
+  // Submit Editor changes
+  appEditorForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const id = document.getElementById('app-editor-id').value;
+    const status = document.getElementById('app-editor-status').value;
+    const notes = document.getElementById('app-editor-notes').value.trim();
+    const nextStep = document.getElementById('app-editor-nextstep').value.trim();
+    const errorAlert = document.getElementById('app-editor-error-alert');
+    const errorMsg = document.getElementById('app-editor-error-msg');
+    
+    errorAlert.style.display = 'none';
+    
+    try {
+      await api.updateApplication(id, {
+        status,
+        notes: notes || null,
+        nextStep: nextStep || null
+      });
+      
+      appEditorModal.style.display = 'none';
+      activeEditingApplication = null;
+      loadApplicationsView();
+    } catch (err) {
+      errorMsg.textContent = err.message || 'Transition denied by database rules.';
+      errorAlert.style.display = 'block';
+    }
+  });
+  
+  // Add checklist item
+  addChecklistForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!activeEditingApplication) return;
+    
+    const titleInput = document.getElementById('checklist-new-title');
+    const title = titleInput.value.trim();
+    
+    const newItem = {
+      id: crypto.randomUUID(),
+      title: title,
+      completed: false,
+      completedAt: null
+    };
+    
+    const updatedChecklist = [...(activeEditingApplication.checklist || []), newItem];
+    
+    try {
+      const res = await api.updateApplicationChecklist(activeEditingApplication.id, updatedChecklist);
+      titleInput.value = '';
+      activeEditingApplication = res.data;
+      renderChecklist(res.data);
+      loadApplicationsView();
+    } catch (err) {
+      alert(`Could not insert milestone: ${err.message}`);
+    }
+  });
+  
+  // Delete Tracker
+  deleteTrackerBtn.addEventListener('click', async () => {
+    if (!activeEditingApplication) return;
+    if (!confirm('Are you sure you want to stop tracking this opportunity application? This will wipe checklists and notes.')) return;
+    
+    try {
+      await api.deleteApplication(activeEditingApplication.id);
+      appEditorModal.style.display = 'none';
+      activeEditingApplication = null;
+      loadApplicationsView();
+    } catch (err) {
+      alert(`Delete failed: ${err.message}`);
+    }
+  });
+}
+
+// Opens a small dialog to create tracker
+async function openApplicationCreator(opportunityId, title) {
+  if (confirm(`Do you want to create an application tracker for: ${title}?`)) {
+    try {
+      await api.createApplication(opportunityId, 'planning');
+      alert('Application tracker added to pipeline!');
+      if (activeView === 'applications') {
+        loadApplicationsView();
+      } else {
+        navigateTo('applications');
+      }
+    } catch (err) {
+      alert(`Tracker failed: ${err.message}`);
+    }
+  }
+}
+
+async function loadApplicationsView() {
+  const loading = document.getElementById('applications-loading');
+  const cols = {
+    planning: document.getElementById('cards-planning'),
+    preparing: document.getElementById('cards-preparing'),
+    submitted: document.getElementById('cards-submitted'),
+    active: document.getElementById('cards-active'),
+    decided: document.getElementById('cards-decided')
+  };
+  
+  // Clear columns
+  Object.values(cols).forEach(col => { col.innerHTML = ''; });
+  loading.style.display = 'flex';
+  
+  // Reset counts
+  document.getElementById('count-planning').textContent = '0';
+  document.getElementById('count-preparing').textContent = '0';
+  document.getElementById('count-submitted').textContent = '0';
+  document.getElementById('count-active').textContent = '0';
+  document.getElementById('count-decided').textContent = '0';
+  
+  try {
+    const res = await api.getApplications();
+    loading.style.display = 'none';
+    
+    if (!res.data || res.data.length === 0) {
+      return;
+    }
+    
+    // Group application models
+    const counts = { planning: 0, preparing: 0, submitted: 0, active: 0, decided: 0 };
+    
+    // Pull opportunity titles for trackers
+    const opPromises = res.data.map(app => api.getOpportunity(app.opportunityId));
+    const opResults = await Promise.all(opPromises);
+    
+    res.data.forEach((app, idx) => {
+      const op = opResults[idx].data;
+      const card = createTrackerCard(app, op);
+      
+      let columnKey = app.status;
+      if (app.status === 'under_review' || app.status === 'shortlisted') {
+        columnKey = 'active';
+      } else if (app.status === 'accepted' || app.status === 'rejected' || app.status === 'withdrawn') {
+        columnKey = 'decided';
+      }
+      
+      if (cols[columnKey]) {
+        cols[columnKey].appendChild(card);
+        counts[columnKey]++;
+      }
+    });
+    
+    // Update counters
+    document.getElementById('count-planning').textContent = counts.planning;
+    document.getElementById('count-preparing').textContent = counts.preparing;
+    document.getElementById('count-submitted').textContent = counts.submitted;
+    document.getElementById('count-active').textContent = counts.active;
+    document.getElementById('count-decided').textContent = counts.decided;
+  } catch (err) {
+    loading.style.display = 'none';
+    alert(`Pipeline failed: ${err.message}`);
+  }
+}
+
+function createTrackerCard(app, op) {
+  const card = document.createElement('div');
+  card.className = 'glass-panel tracker-card';
+  
+  // Calculate checklist progress
+  const totalItems = app.checklist?.length || 0;
+  const completedItems = (app.checklist || []).filter(item => item.completed).length;
+  const progressPercent = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+  
+  card.innerHTML = `
+    <div style="font-size: 0.7rem; font-weight: 700; text-transform: uppercase; color: var(--secondary); margin-bottom: 4px;">${op.organization}</div>
+    <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 8px;">${op.title}</div>
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+      <span class="badge ${getBadgeClassForStatus(app.status)}">${app.status.replace('_', ' ')}</span>
+      <span class="text-subtle" style="font-size: 0.75rem;">${completedItems}/${totalItems} steps</span>
+    </div>
+    
+    <div class="progress-container" style="height: 6px;">
+      <div class="progress-bar" style="width: ${progressPercent}%;"></div>
+    </div>
+    
+    ${app.nextStep ? `
+      <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 8px; border-top: 1px dashed rgba(255,255,255,0.05); padding-top: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+        <strong>Next:</strong> ${app.nextStep}
+      </div>
+    ` : ''}
+  `;
+  
+  card.addEventListener('click', () => openApplicationEditor(app, op));
+  
+  return card;
+}
+
+function getBadgeClassForStatus(status) {
+  const classes = {
+    planning: 'badge-primary',
+    preparing: 'badge-secondary',
+    submitted: 'badge-warning',
+    under_review: 'badge-primary',
+    shortlisted: 'badge-primary',
+    accepted: 'badge-success',
+    rejected: 'badge-danger',
+    withdrawn: 'badge-secondary'
+  };
+  return classes[status] || 'badge-secondary';
+}
+
+function openApplicationEditor(app, op) {
+  activeEditingApplication = app;
+  const modal = document.getElementById('application-editor-modal');
+  
+  document.getElementById('app-editor-id').value = app.id;
+  document.getElementById('app-editor-op-title').textContent = `${op.title} (${op.organization})`;
+  document.getElementById('app-editor-status').value = app.status;
+  document.getElementById('app-editor-nextstep').value = app.nextStep || '';
+  document.getElementById('app-editor-notes').value = app.notes || '';
+  document.getElementById('app-editor-error-alert').style.display = 'none';
+  
+  // Render checklists
+  renderChecklist(app);
+  document.getElementById('app-checklist-block').style.display = 'block';
+  
+  modal.style.display = 'flex';
+}
+
+function renderChecklist(app) {
+  const list = document.getElementById('checklist-items-list');
+  const progressText = document.getElementById('checklist-progress-text');
+  const progressBar = document.getElementById('checklist-progress-bar');
+  
+  list.innerHTML = '';
+  
+  const checklist = app.checklist || [];
+  const total = checklist.length;
+  const completed = checklist.filter(item => item.completed).length;
+  const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+  
+  progressText.textContent = `${completed}/${total}`;
+  progressBar.style.width = `${percent}%`;
+  
+  if (checklist.length === 0) {
+    list.innerHTML = '<li class="text-subtle" style="font-size: 0.85rem; padding: 10px 0;">No active milestones. Add a checklist item below.</li>';
+    return;
+  }
+  
+  checklist.forEach(item => {
+    const li = document.createElement('li');
+    li.className = `checklist-item ${item.completed ? 'completed' : ''}`;
+    
+    const formattedDate = item.completedAt 
+      ? `Done: ${new Date(item.completedAt).toLocaleDateString(undefined, { dateStyle: 'short' })}` 
+      : '';
+      
+    li.innerHTML = `
+      <input type="checkbox" class="checklist-checkbox" ${item.completed ? 'checked' : ''} />
+      <span class="checklist-item-title">${item.title}</span>
+      <span class="checklist-item-date">${formattedDate}</span>
+    `;
+    
+    // Toggle check
+    li.querySelector('.checklist-checkbox').addEventListener('change', async (e) => {
+      const isChecked = e.target.checked;
+      
+      const updatedChecklist = app.checklist.map(oldItem => {
+        if (oldItem.id === item.id) {
+          return {
+            ...oldItem,
+            completed: isChecked,
+            completedAt: isChecked ? new Date().toISOString() : null
+          };
+        }
+        return oldItem;
+      });
+      
+      try {
+        const res = await api.updateApplicationChecklist(app.id, updatedChecklist);
+        activeEditingApplication = res.data;
+        renderChecklist(res.data);
+        loadApplicationsView();
+      } catch (err) {
+        e.target.checked = !isChecked; // revert
+        alert(`Failed to save progress: ${err.message}`);
+      }
+    });
+    
+    list.appendChild(li);
+  });
+}
+
+/* =============================================================================
+   9. Notification overlay & count notifications
+   ============================================================================= */
+function setupNotificationsHandling() {
+  const panel = document.getElementById('notification-panel');
+  const btnTrigger = document.getElementById('btn-noti-trigger');
+  const notiClose = document.getElementById('noti-close');
+  const notiReadAll = document.getElementById('noti-read-all');
+  
+  btnTrigger.addEventListener('click', () => {
+    panel.classList.toggle('active');
+    if (panel.classList.contains('active')) {
+      loadNotificationsPanel();
+    }
+  });
+  
+  notiClose.addEventListener('click', () => {
+    panel.classList.remove('active');
+  });
+  
+  notiReadAll.addEventListener('click', async () => {
+    try {
+      await api.markAllNotificationsRead();
+      loadNotificationsPanel();
+      refreshNotificationsCount();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+}
+
+async function refreshNotificationsCount() {
+  const badge = document.getElementById('noti-badge-count');
+  try {
+    const res = await api.getUnreadNotificationsCount();
+    const count = res?.data?.unreadCount || 0;
+    if (count > 0) {
+      badge.textContent = count;
+      badge.style.display = 'flex';
+    } else {
+      badge.style.display = 'none';
+    }
+  } catch (e) {
+    console.error('Count update error:', e);
+  }
+}
+
+async function loadNotificationsPanel() {
+  const container = document.getElementById('noti-list-container');
+  container.innerHTML = '<div class="spinner" style="margin: 20px auto;"></div>';
+  
+  try {
+    // Synchronize & list notifications
+    const res = await api.getNotifications();
+    container.innerHTML = '';
+    
+    if (!res.data || res.data.length === 0) {
+      container.innerHTML = '<p class="text-muted" style="text-align: center; padding: 40px 0;">No active notifications.</p>';
+      return;
+    }
+    
+    res.data.forEach(item => {
+      const isUnread = !item.readAt;
+      const card = document.createElement('div');
+      card.className = `glass-panel noti-item ${isUnread ? 'unread' : ''}`;
+      
+      const formattedTime = new Date(item.scheduledFor).toLocaleDateString(undefined, {
+        dateStyle: 'short',
+        timeStyle: 'short'
+      });
+      
+      card.innerHTML = `
+        <div class="noti-title">${item.title}</div>
+        <div class="noti-msg">${item.message}</div>
+        <div class="noti-time"><i class="fa-solid fa-clock"></i> ${formattedTime}</div>
+        
+        <div class="noti-actions">
+          ${isUnread ? `<button class="btn btn-secondary btn-link btn-read-noti" style="font-size: 0.75rem;">Mark Read</button>` : ''}
+          <button class="btn btn-secondary btn-link btn-dismiss-noti" style="font-size: 0.75rem; color: var(--text-subtle);">Dismiss</button>
+        </div>
+      `;
+      
+      // Events
+      if (isUnread) {
+        card.querySelector('.btn-read-noti').addEventListener('click', async () => {
+          try {
+            await api.markNotificationRead(item.id);
+            loadNotificationsPanel();
+            refreshNotificationsCount();
+          } catch (e) {
+            alert(e.message);
+          }
+        });
+      }
+      
+      card.querySelector('.btn-dismiss-noti').addEventListener('click', async () => {
+        try {
+          await api.dismissNotification(item.id);
+          loadNotificationsPanel();
+          refreshNotificationsCount();
+        } catch (e) {
+          alert(e.message);
+        }
+      });
+      
+      container.appendChild(card);
+    });
+  } catch (err) {
+    container.innerHTML = `<p class="text-danger" style="text-align: center;">Error: ${err.message}</p>`;
+  }
+}
+
+/* =============================================================================
+   10. AI Career Assistant View (AI Hub)
+   ============================================================================= */
+function setupAiHubHandling() {
+  const btnMatching = document.getElementById('btn-run-matching');
+  const cvForm = document.getElementById('cv-analysis-form');
+  const btnCancelCv = document.getElementById('btn-cancel-cv');
+  
+  let cvAbortController = null;
+  
+  // Optional client cancellation
+  btnCancelCv.addEventListener('click', () => {
+    if (cvAbortController) {
+      cvAbortController.abort();
+      cvAbortController = null;
+      document.getElementById('ai-cv-loading').style.display = 'none';
+      document.getElementById('btn-submit-cv').disabled = false;
+      alert('CV Analysis cancelled by user.');
+    }
+  });
+
+  // Calculate Matches
+  btnMatching.addEventListener('click', async () => {
+    const resultsContainer = document.getElementById('ai-matches-results');
+    const loading = document.getElementById('ai-matches-loading');
+    const limit = parseInt(document.getElementById('ai-match-limit').value, 10);
+    
+    resultsContainer.innerHTML = '';
+    loading.style.display = 'flex';
+    btnMatching.disabled = true;
+    
+    try {
+      const res = await api.getAiMatches(limit);
+      loading.style.display = 'none';
+      btnMatching.disabled = false;
+      
+      const matches = res?.data?.matches || [];
+      if (matches.length === 0) {
+        resultsContainer.innerHTML = '<p class="text-muted">No compatible opportunity matches found for your profile. Update skills in profile.</p>';
+        return;
+      }
+      
+      // Pull opportunities details
+      const opPromises = matches.map(m => api.getOpportunity(m.opportunityId));
+      const opResults = await Promise.all(opPromises);
+      
+      matches.forEach((match, idx) => {
+        const op = opResults[idx].data;
+        const card = createMatchResultCard(match, op);
+        resultsContainer.appendChild(card);
+      });
+    } catch (err) {
+      loading.style.display = 'none';
+      btnMatching.disabled = false;
+      
+      if (err.statusCode === 409 && err.code === 'PROFILE_REQUIRED') {
+        let gapsText = 'Please complete required fields.';
+        if (err.details?.profileGaps) {
+          gapsText = `Missing properties: ${err.details.profileGaps.join(', ')}.`;
+        }
+        resultsContainer.innerHTML = `
+          <div class="alert alert-warning">
+            <i class="fa-solid fa-circle-exclamation"></i>
+            <div>
+              <strong>Profile Missing Details:</strong> ${gapsText} <a href="#profile" class="accent-text">Edit Profile</a>
+            </div>
+          </div>
+        `;
+      } else if (err.statusCode === 503 || err.code === 'AI_NOT_CONFIGURED') {
+        resultsContainer.innerHTML = `
+          <div class="alert alert-danger">
+            <i class="fa-solid fa-triangle-exclamation"></i> AI matching features are currently offline on this backend server.
+          </div>
+        `;
+      } else {
+        resultsContainer.innerHTML = `<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> Matcher Error: ${err.message}</div>`;
+      }
+    }
+  });
+  
+  // Submit CV Analysis
+  cvForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const cvText = document.getElementById('cv-text-input').value.trim();
+    const opportunityId = document.getElementById('cv-opportunity-select').value || null;
+    const resultBlock = document.getElementById('ai-cv-result');
+    const loading = document.getElementById('ai-cv-loading');
+    const submitBtn = document.getElementById('btn-submit-cv');
+    
+    resultBlock.style.display = 'none';
+    loading.style.display = 'flex';
+    submitBtn.disabled = true;
+    
+    try {
+      const res = await api.analyzeCv(cvText, opportunityId);
+      loading.style.display = 'none';
+      submitBtn.disabled = false;
+      
+      const analysis = res.data.analysis;
+      renderCvAnalysisResult(analysis);
+    } catch (err) {
+      loading.style.display = 'none';
+      submitBtn.disabled = false;
+      
+      if (err.statusCode === 503 || err.code === 'AI_NOT_CONFIGURED') {
+        alert('CV Analysis model service is offline.');
+      } else {
+        alert(`Analysis failed: ${err.message}`);
+      }
+    }
+  });
+  
+  // Deferred buttons tests
+  document.getElementById('btn-test-coverletter').addEventListener('click', async () => {
+    try {
+      await api.generateCoverLetter('10000000-0000-4000-8000-000000000001');
+    } catch (err) {
+      alert(`Deferred Result confirmation: (Status ${err.statusCode} - ${err.code})\n\n${err.message}`);
+    }
+  });
+  
+  document.getElementById('btn-test-essay').addEventListener('click', async () => {
+    try {
+      await api.getEssayAssistance('brainstorm', 'Why should I join?');
+    } catch (err) {
+      alert(`Deferred Result confirmation: (Status ${err.statusCode} - ${err.code})\n\n${err.message}`);
+    }
+  });
+}
+
+function createMatchResultCard(match, op) {
+  const div = document.createElement('div');
+  div.className = 'glass-panel';
+  div.style.padding = '20px';
+  
+  div.innerHTML = `
+    <div style="display: flex; gap: 20px; align-items: flex-start;">
+      <div class="ai-score-ring" style="margin: 0; flex-shrink: 0; width: 60px; height: 60px;">
+        <div class="ai-score-val" style="font-size: 1.25rem; color: var(--success);">${match.matchScore}</div>
+        <div class="ai-score-label" style="font-size: 0.5rem;">Match</div>
+      </div>
+      <div style="flex: 1;">
+        <div class="op-org" style="font-size: 0.75rem; margin-bottom: 2px;">${op.organization}</div>
+        <h4 style="font-size: 1.05rem; cursor: pointer;" class="match-op-title">${op.title}</h4>
+        
+        <div style="margin-top: 6px; font-size: 0.8rem; font-weight: 600;">
+          Eligibility Assessment: <span class="accent-text">${match.eligibilityAssessment.toUpperCase()}</span>
+        </div>
+        
+        <div class="ai-analysis-list strengths" style="font-size: 0.8rem; margin-top: 10px;">
+          <strong>Strengths & Criteria Fits</strong>
+          <ul>${match.matchedCriteria.map(c => `<li>${c}</li>`).join('')}</ul>
+        </div>
+        
+        ${match.gaps?.length > 0 ? `
+          <div class="ai-analysis-list gaps" style="font-size: 0.8rem; margin-top: 10px;">
+            <strong>Identified Skills gaps</strong>
+            <ul>${match.gaps.map(g => `<li>${g}</li>`).join('')}</ul>
+          </div>
+        ` : ''}
+        
+        <span class="text-subtle" style="font-size: 0.65rem; display: block; margin-top: 12px;">${match.disclaimer}</span>
+      </div>
+    </div>
+  `;
+  
+  div.querySelector('.match-op-title').addEventListener('click', () => showOpportunityDetails(op.id));
+  
+  return div;
+}
+
+function renderCvAnalysisResult(analysis) {
+  const resultBlock = document.getElementById('ai-cv-result');
+  
+  resultBlock.innerHTML = `
+    <h4 style="color: var(--secondary); margin-bottom: 8px;"><i class="fa-solid fa-file-invoice"></i> CV Analysis Result (${analysis.analysisScope})</h4>
+    
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 16px;">
+      <div class="ai-analysis-list strengths" style="font-size: 0.8rem;">
+        <strong>Strengths Highlighted:</strong>
+        <ul>${analysis.strengths.map(s => `<li>${s}</li>`).join('')}</ul>
+      </div>
+      <div class="ai-analysis-list actions" style="font-size: 0.8rem;">
+        <strong>Evidence Found:</strong>
+        <ul>${analysis.relevantEvidence.map(e => `<li>${e}</li>`).join('')}</ul>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 16px; border-top: 1px dashed rgba(255,255,255,0.05); padding-top: 16px;">
+      <div class="ai-analysis-list gaps" style="font-size: 0.8rem;">
+        <strong>Skills Gaps:</strong>
+        <ul>${analysis.gaps.map(g => `<li>${g}</li>`).join('')}</ul>
+      </div>
+      <div class="ai-analysis-list actions" style="font-size: 0.8rem;">
+        <strong>Refinement Suggestions:</strong>
+        <ul>${analysis.suggestions.map(s => `<li>${s}</li>`).join('')}</ul>
+      </div>
+    </div>
+    
+    ${analysis.missingInformation?.length > 0 ? `
+      <div class="ai-analysis-list gaps" style="font-size: 0.8rem; margin-top: 16px; border-top: 1px dashed rgba(255,255,255,0.05); padding-top: 16px;">
+        <strong>Missing Information:</strong>
+        <ul>${analysis.missingInformation.map(m => `<li>${m}</li>`).join('')}</ul>
+      </div>
+    ` : ''}
+
+    <span class="text-subtle" style="font-size: 0.65rem; display: block; margin-top: 16px;">${analysis.disclaimer}</span>
+  `;
+  
+  resultBlock.style.display = 'block';
+}
+
+async function loadAiHubView() {
+  // Check AI state availability
+  const disabledWarning = document.getElementById('ai-disabled-warning');
+  try {
+    const health = await api.getHealth();
+    // In this app, checking enabled feature list could also work, but backend returns 503 on ai endpoints if disabled
+    disabledWarning.style.display = 'none';
+  } catch (e) {
+    if (e.statusCode === 503 || e.code === 'AI_NOT_CONFIGURED') {
+      disabledWarning.style.display = 'block';
+    }
+  }
+  
+  // Populate CV target opportunities select dropdown
+  const opSelect = document.getElementById('cv-opportunity-select');
+  opSelect.innerHTML = '<option value="">General CV Analysis (No opportunity target)</option>';
+  
+  try {
+    const res = await api.getOpportunities({ page: 1, limit: 50 });
+    if (res.data) {
+      res.data.forEach(op => {
+        const opt = document.createElement('option');
+        opt.value = op.id;
+        opt.textContent = `${op.title} (${op.organization})`;
+        opSelect.appendChild(opt);
+      });
+    }
+  } catch (e) {}
+}
+
+/* =============================================================================
+   11. Dashboard & General Updates loops
+   ============================================================================= */
+async function loadDashboardView() {
+  const deadlinesContainer = document.getElementById('dash-deadlines-container');
+  const checklistContainer = document.getElementById('dash-checklist-container');
+  
+  deadlinesContainer.innerHTML = '';
+  checklistContainer.innerHTML = '';
+  
+  try {
+    // 1. Dashboard profile completion
+    await loadProfileData();
+    
+    // 2. Metrics counting
+    const savedRes = await api.getSavedOpportunities();
+    const savedCount = savedRes?.data?.length || 0;
+    document.getElementById('dash-saved-count').textContent = savedCount;
+    
+    const trackersRes = await api.getApplications();
+    const activeTrackers = (trackersRes?.data || []).filter(app => 
+      !['accepted', 'rejected', 'withdrawn'].includes(app.status)
+    ).length;
+    document.getElementById('dash-track-count').textContent = activeTrackers;
+    
+    // 3. Loading pending checklist steps
+    let hasChecklistItems = false;
+    const listUl = document.createElement('ul');
+    listUl.className = 'checklist-list';
+    
+    // 4. Deadlines listing
+    const futureDeadlines = [];
+    
+    if (trackersRes.data && trackersRes.data.length > 0) {
+      // Load opportunities detailed context for all active trackers to gather deadlines
+      const opPromises = trackersRes.data.map(app => api.getOpportunity(app.opportunityId));
+      const opResults = await Promise.all(opPromises);
+      
+      trackersRes.data.forEach((app, idx) => {
+        const op = opResults[idx].data;
+        
+        // Checklist gathering
+        const pending = (app.checklist || []).filter(item => !item.completed);
+        if (pending.length > 0) {
+          hasChecklistItems = true;
+          pending.forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'checklist-item';
+            li.style.background = 'rgba(255,255,255,0.01)';
+            li.innerHTML = `
+              <input type="checkbox" class="checklist-checkbox" data-app-id="${app.id}" data-item-id="${item.id}" />
+              <span class="checklist-item-title" style="font-size: 0.85rem;"><strong>${op.title}:</strong> ${item.title}</span>
+            `;
+            
+            // Checklist listener
+            li.querySelector('.checklist-checkbox').addEventListener('change', async (e) => {
+              const isChecked = e.target.checked;
+              if (isChecked) {
+                const updatedList = app.checklist.map(oldItem => {
+                  if (oldItem.id === item.id) {
+                    return { ...oldItem, completed: true, completedAt: new Date().toISOString() };
+                  }
+                  return oldItem;
+                });
+                
+                try {
+                  await api.updateApplicationChecklist(app.id, updatedList);
+                  li.remove();
+                  loadDashboardView();
+                } catch (err) {
+                  e.target.checked = false;
+                  alert(err.message);
+                }
+              }
+            });
+            listUl.appendChild(li);
+          });
+        }
+        
+        // Deadline warning checks (warning active if deadline is set and in future)
+        if (op.deadline) {
+          const dlTime = new Date(op.deadline);
+          if (dlTime > new Date() && !['accepted', 'rejected', 'withdrawn'].includes(app.status)) {
+            futureDeadlines.push({
+              title: op.title,
+              org: op.organization,
+              deadline: dlTime
+            });
+          }
+        }
+      });
+    }
+    
+    if (hasChecklistItems) {
+      checklistContainer.appendChild(listUl);
+    } else {
+      checklistContainer.innerHTML = '<p class="text-muted" style="font-size: 0.85rem;">No active pending items. Create/manage milestones in active trackers.</p>';
+    }
+    
+    // Sort deadlines ascending
+    futureDeadlines.sort((a,b) => a.deadline - b.deadline);
+    if (futureDeadlines.length > 0) {
+      futureDeadlines.forEach(item => {
+        const itemBox = document.createElement('div');
+        itemBox.className = 'glass-panel';
+        itemBox.style.padding = '12px 16px';
+        
+        const daysLeft = Math.ceil((item.deadline - new Date()) / (1000 * 60 * 60 * 24));
+        const formatted = item.deadline.toLocaleDateString(undefined, { dateStyle: 'short' });
+        
+        itemBox.innerHTML = `
+          <div style="font-size: 0.75rem; font-weight: 700; color: var(--secondary);">${item.org}</div>
+          <div style="font-weight: 600; font-size: 0.85rem; margin-top: 2px;">${item.title}</div>
+          <div style="font-size: 0.75rem; margin-top: 6px; display: flex; justify-content: space-between;">
+            <span>Date: ${formatted}</span>
+            <span style="font-weight: 700; color: ${daysLeft <= 3 ? 'var(--error)' : 'var(--accent)'}">${daysLeft} days remaining</span>
+          </div>
+        `;
+        deadlinesContainer.appendChild(itemBox);
+      });
+    } else {
+      deadlinesContainer.innerHTML = '<p class="text-muted" style="font-size: 0.85rem;">No upcoming deadlines found.</p>';
+    }
+  } catch (err) {
+    console.error('Error refreshing dashboard:', err);
+  }
+}
