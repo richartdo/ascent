@@ -1,6 +1,11 @@
 import './style.css';
 import { getSupabase, initializeSupabase } from './supabaseClient.js';
 import { api, getApiBaseUrl, saveApiBaseUrl } from './api.js';
+import {
+  CV_TEXT_MAX_LENGTH,
+  extractCvDocumentText,
+  isSupportedCvDocument
+} from './cvDocument.js';
 
 // Core State variables
 let activeView = 'dashboard';
@@ -16,6 +21,28 @@ const OP_LIMIT = 9;
 
 // Active application cache for checklist operations
 let activeEditingApplication = null;
+let pipelineApplications = new Map();
+let applicationsLoadRequestId = 0;
+let savedOpportunityIds = new Set();
+
+const applicationTransitions = {
+  planning: ['preparing', 'withdrawn'],
+  preparing: ['planning', 'submitted', 'withdrawn'],
+  submitted: ['under_review', 'shortlisted', 'accepted', 'rejected', 'withdrawn'],
+  under_review: ['shortlisted', 'accepted', 'rejected', 'withdrawn'],
+  shortlisted: ['accepted', 'rejected', 'withdrawn'],
+  accepted: ['under_review'],
+  rejected: ['under_review'],
+  withdrawn: ['preparing']
+};
+
+const opportunityFromResponse = response => response?.data?.opportunity ?? response?.data ?? null;
+const applicationFromResponse = response => response?.data?.application ?? response?.data ?? null;
+const profileFromResponse = response => (
+  Object.prototype.hasOwnProperty.call(response?.data ?? {}, 'profile')
+    ? response.data.profile
+    : response?.data ?? null
+);
 
 // Initial bootstrap run
 window.addEventListener('DOMContentLoaded', () => {
@@ -133,6 +160,12 @@ function setupAuthHandling() {
   const signupNameGroup = document.getElementById('signup-name-group');
   const authSubmitBtn = document.getElementById('auth-submit-btn');
   const logoutBtn = document.getElementById('logout-btn');
+
+  window.addEventListener('ascent:session-expired', () => {
+    handleLogout();
+    document.getElementById('auth-error-msg').textContent = 'Your session expired. Please log in again.';
+    document.getElementById('auth-error-alert').style.display = 'flex';
+  });
   
   // Tab toggles
   authTabLogin.addEventListener('click', () => {
@@ -273,7 +306,7 @@ function setupViewRouting() {
   window.addEventListener('hashchange', () => {
     const hash = window.location.hash.substring(1);
     const validViews = ['dashboard', 'opportunities', 'saved', 'applications', 'profile', 'ai'];
-    if (validViews.includes(hash)) {
+    if (validViews.includes(hash) && hash !== activeView) {
       navigateTo(hash);
     }
   });
@@ -324,6 +357,14 @@ function navigateTo(viewName) {
    ============================================================================= */
 function setupProfileHandling() {
   const form = document.getElementById('profile-form');
+  const editButton = document.getElementById('btn-edit-profile');
+  const cancelButton = document.getElementById('btn-cancel-profile-edit');
+  const documentForm = document.getElementById('profile-document-form');
+
+  editButton.addEventListener('click', () => setProfileMode('edit'));
+  cancelButton.addEventListener('click', async () => {
+    await loadProfileView();
+  });
   
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -364,27 +405,34 @@ function setupProfileHandling() {
     
     try {
       const result = await api.updateProfile(profilePayload);
-      successAlert.style.display = 'block';
-      
-      // Update completeness
-      if (result?.data) {
-        profileCompletion = result.data.profileCompletion;
-        updateProfileBadges(result.data);
-      }
-      setTimeout(() => { successAlert.style.display = 'none'; }, 5000);
+      const profile = profileFromResponse(result);
+      if (!profile) throw new Error('The API returned an empty profile.');
+
+      profileCompletion = profile.profileCompletion;
+      updateProfileBadges(profile);
+      populateProfileForm(profile);
+      renderProfileSummary(profile);
+      setProfileMode('view');
+
+      const viewSuccessAlert = document.getElementById('profile-view-success-alert');
+      viewSuccessAlert.style.display = 'flex';
+      setTimeout(() => { viewSuccessAlert.style.display = 'none'; }, 5000);
     } catch (err) {
       errorMsg.textContent = err.message || 'Failed to update profile details.';
       errorAlert.style.display = 'block';
     }
   });
+
+  documentForm.addEventListener('submit', uploadProfileDocument);
 }
 
 async function loadProfileData() {
   try {
     const res = await api.getProfile();
-    if (res?.data) {
-      profileCompletion = res.data.profileCompletion || 0;
-      updateProfileBadges(res.data);
+    const profile = profileFromResponse(res);
+    if (profile) {
+      profileCompletion = profile.profileCompletion || 0;
+      updateProfileBadges(profile);
     }
   } catch (e) {
     console.error('Error pre-loading profile:', e);
@@ -409,31 +457,223 @@ function updateProfileBadges(profile) {
 async function loadProfileView() {
   try {
     const res = await api.getProfile();
-    const data = res?.data || {};
-    
-    document.getElementById('prof-fullname').value = data.fullName || '';
-    document.getElementById('prof-persona').value = data.persona || '';
-    document.getElementById('prof-country').value = data.countryCode || '';
-    document.getElementById('prof-city').value = data.city || '';
-    document.getElementById('prof-education').value = data.educationLevel || '';
-    document.getElementById('prof-institution').value = data.institution || '';
-    document.getElementById('prof-field').value = data.fieldOfStudy || '';
-    document.getElementById('prof-gradyear').value = data.graduationYear || '';
-    document.getElementById('prof-skills').value = (data.skills || []).join(', ');
-    document.getElementById('prof-interests').value = (data.interests || []).join(', ');
-    document.getElementById('prof-career').value = data.careerGoals || '';
-    document.getElementById('prof-remote').value = data.remotePreference || '';
-    document.getElementById('prof-locations').value = (data.preferredLocations || []).join(', ');
-    
-    // Clear types and check relevant
-    document.querySelectorAll('input[name="prof-op-types"]').forEach(cb => {
-      cb.checked = (data.preferredOpportunityTypes || []).includes(cb.value);
-    });
-    
-    updateProfileBadges(data);
+    const profile = profileFromResponse(res);
+
+    if (profile) {
+      populateProfileForm(profile);
+      renderProfileSummary(profile);
+      updateProfileBadges(profile);
+      setProfileMode('view');
+    } else {
+      populateProfileForm({});
+      updateProfileBadges({});
+      setProfileMode('edit', { allowCancel: false });
+    }
+
+    await loadProfileDocuments();
   } catch (err) {
     console.error('Could not load profile details.', err);
+    setProfileMode('edit', { allowCancel: false });
   }
+}
+
+function populateProfileForm(profile) {
+  document.getElementById('prof-fullname').value = profile.fullName || '';
+  document.getElementById('prof-persona').value = profile.persona || '';
+  document.getElementById('prof-country').value = profile.countryCode || '';
+  document.getElementById('prof-city').value = profile.city || '';
+  document.getElementById('prof-education').value = profile.educationLevel || '';
+  document.getElementById('prof-institution').value = profile.institution || '';
+  document.getElementById('prof-field').value = profile.fieldOfStudy || '';
+  document.getElementById('prof-gradyear').value = profile.graduationYear || '';
+  document.getElementById('prof-skills').value = (profile.skills || []).join(', ');
+  document.getElementById('prof-interests').value = (profile.interests || []).join(', ');
+  document.getElementById('prof-career').value = profile.careerGoals || '';
+  document.getElementById('prof-remote').value = profile.remotePreference || '';
+  document.getElementById('prof-locations').value = (profile.preferredLocations || []).join(', ');
+
+  document.querySelectorAll('input[name="prof-op-types"]').forEach(checkbox => {
+    checkbox.checked = (profile.preferredOpportunityTypes || []).includes(checkbox.value);
+  });
+}
+
+function setProfileMode(mode, { allowCancel = true } = {}) {
+  const isEditing = mode === 'edit';
+  document.getElementById('profile-summary').style.display = isEditing ? 'none' : 'block';
+  document.getElementById('profile-form').style.display = isEditing ? 'block' : 'none';
+  document.getElementById('btn-edit-profile').style.display = isEditing ? 'none' : 'inline-flex';
+  document.getElementById('btn-cancel-profile-edit').style.display = isEditing && allowCancel ? 'inline-flex' : 'none';
+}
+
+function renderProfileSummary(profile) {
+  const personaLabels = {
+    student: 'Student',
+    recent_graduate: 'Recent Graduate',
+    young_founder: 'Young Founder'
+  };
+  const educationLabels = {
+    secondary: 'Secondary',
+    undergraduate: 'Undergraduate',
+    postgraduate: 'Postgraduate',
+    graduate: 'Graduate',
+    other: 'Other'
+  };
+  const remoteLabels = {
+    remote_only: 'Remote only',
+    remote_preferred: 'Remote preferred',
+    no_preference: 'No preference'
+  };
+
+  document.getElementById('profile-view-name').textContent = profile.fullName || 'Name not provided';
+  document.getElementById('profile-view-persona').textContent = personaLabels[profile.persona] || 'Persona not provided';
+  document.getElementById('profile-view-location').textContent = [profile.city, profile.countryCode].filter(Boolean).join(', ') || 'Location not provided';
+  document.getElementById('profile-view-education').textContent = educationLabels[profile.educationLevel] || 'Not provided';
+  document.getElementById('profile-view-institution').textContent = profile.institution || 'Not provided';
+  document.getElementById('profile-view-field').textContent = profile.fieldOfStudy || 'Not provided';
+  document.getElementById('profile-view-graduation').textContent = profile.graduationYear || 'Not provided';
+  document.getElementById('profile-view-remote').textContent = remoteLabels[profile.remotePreference] || 'Not provided';
+  document.getElementById('profile-view-career').textContent = profile.careerGoals || 'No career goals added yet.';
+  document.getElementById('profile-view-updated').textContent = profile.updatedAt
+    ? `Updated ${new Date(profile.updatedAt).toLocaleString()}`
+    : '';
+
+  renderProfileTags('profile-view-skills', profile.skills, 'No skills added');
+  renderProfileTags('profile-view-interests', profile.interests, 'No interests added');
+  renderProfileTags('profile-view-types', profile.preferredOpportunityTypes?.map(formatApplicationStatus), 'No opportunity preferences added');
+  renderProfileTags('profile-view-locations', profile.preferredLocations, 'No preferred locations added');
+}
+
+function renderProfileTags(containerId, values = [], emptyMessage) {
+  const container = document.getElementById(containerId);
+  container.replaceChildren();
+  if (!values?.length) {
+    const empty = document.createElement('span');
+    empty.className = 'text-subtle';
+    empty.textContent = emptyMessage;
+    container.appendChild(empty);
+    return;
+  }
+
+  values.forEach(value => {
+    const tag = document.createElement('span');
+    tag.className = 'profile-tag';
+    tag.textContent = value;
+    container.appendChild(tag);
+  });
+}
+
+async function uploadProfileDocument(event) {
+  event.preventDefault();
+  const input = document.getElementById('profile-document-input');
+  const status = document.getElementById('profile-document-status');
+  const file = input.files?.[0];
+  if (!file) return;
+
+  const allowedExtensions = ['pdf', 'doc', 'docx'];
+  const extension = file.name.split('.').pop()?.toLowerCase();
+  if (!allowedExtensions.includes(extension) || file.size > 5 * 1024 * 1024) {
+    status.textContent = 'Choose a PDF, DOC, or DOCX file no larger than 5 MB.';
+    status.className = 'text-error';
+    return;
+  }
+
+  const supabase = getSupabase();
+  if (!supabase || !currentUserId) {
+    status.textContent = 'Sign in before uploading a document.';
+    status.className = 'text-error';
+    return;
+  }
+
+  const safeName = file.name.replace(/[^A-Za-z0-9._-]/g, '_').slice(-120);
+  const objectPath = `${currentUserId}/${crypto.randomUUID()}--${safeName}`;
+  status.textContent = 'Uploading securely...';
+  status.className = 'text-subtle';
+
+  const { error } = await supabase.storage
+    .from('profile-documents')
+    .upload(objectPath, file, { cacheControl: '3600', upsert: false, contentType: file.type || undefined });
+
+  if (error) {
+    status.textContent = `Upload failed: ${error.message}`;
+    status.className = 'text-error';
+    return;
+  }
+
+  input.value = '';
+  status.textContent = 'Document uploaded. It is private to your account.';
+  status.className = 'text-success';
+  await loadProfileDocuments();
+}
+
+async function loadProfileDocuments() {
+  const list = document.getElementById('profile-documents-list');
+  if (!list) return;
+  list.innerHTML = '<p class="text-subtle">Loading documents...</p>';
+
+  const supabase = getSupabase();
+  if (!supabase || !currentUserId) {
+    list.innerHTML = '<p class="text-subtle">Sign in to manage documents.</p>';
+    return;
+  }
+
+  const { data, error } = await supabase.storage
+    .from('profile-documents')
+    .list(currentUserId, { limit: 25, sortBy: { column: 'created_at', order: 'desc' } });
+
+  if (error) {
+    list.innerHTML = `<p class="text-error">Could not load documents: ${error.message}</p>`;
+    return;
+  }
+
+  list.replaceChildren();
+  if (!data?.length) {
+    list.innerHTML = '<p class="text-subtle">No documents uploaded yet.</p>';
+    return;
+  }
+
+  data.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'profile-document-row';
+
+    const details = document.createElement('div');
+    const name = document.createElement('strong');
+    name.textContent = item.name.includes('--') ? item.name.split('--').slice(1).join('--') : item.name;
+    const metadata = document.createElement('span');
+    metadata.className = 'text-subtle';
+    metadata.textContent = item.created_at ? new Date(item.created_at).toLocaleString() : '';
+    details.append(name, metadata);
+
+    const actions = document.createElement('div');
+    actions.className = 'profile-document-actions';
+    const viewButton = document.createElement('button');
+    viewButton.type = 'button';
+    viewButton.className = 'btn btn-secondary';
+    viewButton.textContent = 'View';
+    viewButton.addEventListener('click', async () => {
+      const { data: signed, error: signedError } = await supabase.storage
+        .from('profile-documents')
+        .createSignedUrl(`${currentUserId}/${item.name}`, 60);
+      if (signedError) alert(`Could not open document: ${signedError.message}`);
+      else window.open(signed.signedUrl, '_blank', 'noopener,noreferrer');
+    });
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'btn btn-danger';
+    deleteButton.textContent = 'Delete';
+    deleteButton.addEventListener('click', async () => {
+      if (!confirm(`Delete ${name.textContent}?`)) return;
+      const { error: deleteError } = await supabase.storage
+        .from('profile-documents')
+        .remove([`${currentUserId}/${item.name}`]);
+      if (deleteError) alert(`Could not delete document: ${deleteError.message}`);
+      else await loadProfileDocuments();
+    });
+
+    actions.append(viewButton, deleteButton);
+    row.append(details, actions);
+    list.appendChild(row);
+  });
 }
 
 /* =============================================================================
@@ -516,7 +756,11 @@ async function loadOpportunitiesView() {
   if (locationVal) params.locationMode = locationVal;
   
   try {
-    const res = await api.getOpportunities(params);
+    const [res, savedRes] = await Promise.all([
+      api.getOpportunities(params),
+      api.getSavedOpportunities({ page: 1, limit: 50 }).catch(() => ({ data: [] }))
+    ]);
+    savedOpportunityIds = new Set((savedRes.data || []).map(item => item.opportunityId));
     grid.innerHTML = '';
     loading.style.display = 'none';
     
@@ -532,7 +776,7 @@ async function loadOpportunitiesView() {
     document.getElementById('op-page-num').textContent = `Page ${currentOpPage} of ${totalOpPages}`;
     
     res.data.forEach(op => {
-      const card = createOpportunityCard(op);
+      const card = createOpportunityCard(op, false, null, savedOpportunityIds.has(op.id));
       grid.appendChild(card);
     });
   } catch (err) {
@@ -541,7 +785,7 @@ async function loadOpportunitiesView() {
   }
 }
 
-function createOpportunityCard(op, isSavedList = false, savedNotes = null) {
+function createOpportunityCard(op, isSavedList = false, savedNotes = null, isSaved = isSavedList) {
   const card = document.createElement('div');
   card.className = 'glass-panel opportunity-card';
   
@@ -556,7 +800,7 @@ function createOpportunityCard(op, isSavedList = false, savedNotes = null) {
     </div>
     <div class="op-org">${op.organization}</div>
     <div class="op-title" data-id="${op.id}">${op.title}</div>
-    <div class="op-desc">${op.description}</div>
+    <div class="op-desc">${op.descriptionPreview ?? op.description ?? ''}</div>
     
     ${isSavedList ? `
       <div style="margin-bottom: 14px;">
@@ -572,7 +816,7 @@ function createOpportunityCard(op, isSavedList = false, savedNotes = null) {
       <div class="op-deadline"><i class="fa-solid fa-calendar-days"></i> ${formattedDeadline}</div>
       <div class="op-actions">
         <button class="btn btn-secondary btn-icon btn-save-op" data-id="${op.id}" title="Bookmark opportunity">
-          <i class="${isSavedList ? 'fa-solid fa-bookmark' : 'fa-regular fa-bookmark'}"></i>
+          <i class="${isSaved ? 'fa-solid fa-bookmark' : 'fa-regular fa-bookmark'}"></i>
         </button>
         <button class="btn btn-primary btn-track-op" data-id="${op.id}" style="padding: 6px 12px; font-size: 0.8rem;">
           <i class="fa-solid fa-plus"></i> Track
@@ -590,6 +834,7 @@ function createOpportunityCard(op, isSavedList = false, savedNotes = null) {
     try {
       if (isSavedList || saveBtn.querySelector('i').className.includes('fa-solid')) {
         await api.unsaveOpportunity(op.id);
+        savedOpportunityIds.delete(op.id);
         if (isSavedList) {
           loadSavedView();
         } else {
@@ -597,6 +842,7 @@ function createOpportunityCard(op, isSavedList = false, savedNotes = null) {
         }
       } else {
         await api.saveOpportunity(op.id);
+        savedOpportunityIds.add(op.id);
         saveBtn.querySelector('i').className = 'fa-solid fa-bookmark';
       }
     } catch (err) {
@@ -654,7 +900,7 @@ async function showOpportunityDetails(id) {
   
   try {
     const res = await api.getOpportunity(id);
-    const op = res.data;
+    const op = opportunityFromResponse(res);
     
     document.getElementById('modal-op-type').className = `badge ${getBadgeClassForType(op.type)}`;
     document.getElementById('modal-op-type').textContent = op.type;
@@ -879,7 +1125,7 @@ async function loadSavedView() {
   loading.style.display = 'flex';
   
   try {
-    const savedRes = await api.getSavedOpportunities();
+    const savedRes = await api.getSavedOpportunities({ page: 1, limit: 50 });
     grid.innerHTML = '';
     loading.style.display = 'none';
     
@@ -888,13 +1134,11 @@ async function loadSavedView() {
       return;
     }
     
-    // Fetch opportunities detailed context for all saved items
-    const opsPromises = savedRes.data.map(item => api.getOpportunity(item.opportunityId));
-    const opsResults = await Promise.all(opsPromises);
-    
-    savedRes.data.forEach((item, index) => {
-      const opDetail = opsResults[index].data;
-      const card = createOpportunityCard(opDetail, true, item.notes);
+    savedOpportunityIds = new Set(savedRes.data.map(item => item.opportunityId));
+    savedRes.data.forEach(item => {
+      const opDetail = item.opportunity;
+      if (!opDetail) return;
+      const card = createOpportunityCard(opDetail, true, item.notes, true);
       grid.appendChild(card);
     });
   } catch (err) {
@@ -912,6 +1156,8 @@ function setupApplicationsHandling() {
   const closeAppEditor = document.getElementById('close-app-editor');
   const addChecklistForm = document.getElementById('checklist-add-form');
   const deleteTrackerBtn = document.getElementById('btn-delete-tracker');
+
+  setupApplicationBoardDragAndDrop();
   
   closeAppEditor.addEventListener('click', () => {
     appEditorModal.style.display = 'none';
@@ -966,8 +1212,8 @@ function setupApplicationsHandling() {
     try {
       const res = await api.updateApplicationChecklist(activeEditingApplication.id, updatedChecklist);
       titleInput.value = '';
-      activeEditingApplication = res.data;
-      renderChecklist(res.data);
+      activeEditingApplication = applicationFromResponse(res);
+      renderChecklist(activeEditingApplication);
       loadApplicationsView();
     } catch (err) {
       alert(`Could not insert milestone: ${err.message}`);
@@ -1008,6 +1254,7 @@ async function openApplicationCreator(opportunityId, title) {
 }
 
 async function loadApplicationsView() {
+  const requestId = ++applicationsLoadRequestId;
   const loading = document.getElementById('applications-loading');
   const cols = {
     planning: document.getElementById('cards-planning'),
@@ -1030,21 +1277,34 @@ async function loadApplicationsView() {
   
   try {
     const res = await api.getApplications();
+
+    // Navigation updates the hash, which can start a second load. Only the
+    // newest response may render, otherwise concurrent responses append the
+    // same application card more than once.
+    if (requestId !== applicationsLoadRequestId || activeView !== 'applications') {
+      return;
+    }
+
     loading.style.display = 'none';
     
     if (!res.data || res.data.length === 0) {
       return;
     }
     
+    pipelineApplications = new Map(res.data.map(application => [application.id, application]));
+
     // Group application models
     const counts = { planning: 0, preparing: 0, submitted: 0, active: 0, decided: 0 };
-    
-    // Pull opportunity titles for trackers
-    const opPromises = res.data.map(app => api.getOpportunity(app.opportunityId));
-    const opResults = await Promise.all(opPromises);
-    
-    res.data.forEach((app, idx) => {
-      const op = opResults[idx].data;
+
+    res.data.forEach(app => {
+      const op = {
+        id: app.opportunityId,
+        title: app.opportunityTitle || 'Opportunity unavailable',
+        organization: app.organization || 'Organization unavailable',
+        deadline: app.deadline,
+        applicationUrl: app.applicationUrl,
+        status: app.opportunityStatus
+      };
       const card = createTrackerCard(app, op);
       
       let columnKey = app.status;
@@ -1067,6 +1327,9 @@ async function loadApplicationsView() {
     document.getElementById('count-active').textContent = counts.active;
     document.getElementById('count-decided').textContent = counts.decided;
   } catch (err) {
+    if (requestId !== applicationsLoadRequestId || activeView !== 'applications') {
+      return;
+    }
     loading.style.display = 'none';
     alert(`Pipeline failed: ${err.message}`);
   }
@@ -1075,10 +1338,18 @@ async function loadApplicationsView() {
 function createTrackerCard(app, op) {
   const card = document.createElement('div');
   card.className = 'glass-panel tracker-card';
+  card.draggable = true;
+  card.dataset.applicationId = app.id;
+  card.dataset.status = app.status;
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.setAttribute('aria-label', `${op.title}. ${app.status.replace('_', ' ')}. Drag to another pipeline stage or press Enter to edit.`);
   
   // Calculate checklist progress
-  const totalItems = app.checklist?.length || 0;
-  const completedItems = (app.checklist || []).filter(item => item.completed).length;
+  const totalItems = app.checklist?.length ?? app.checklistProgress?.total ?? 0;
+  const completedItems = app.checklist
+    ? app.checklist.filter(item => item.completed).length
+    : app.checklistProgress?.completed ?? 0;
   const progressPercent = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
   
   card.innerHTML = `
@@ -1101,9 +1372,107 @@ function createTrackerCard(app, op) {
     ` : ''}
   `;
   
-  card.addEventListener('click', () => openApplicationEditor(app, op));
+  let wasDragged = false;
+  card.addEventListener('dragstart', event => {
+    wasDragged = true;
+    card.classList.add('dragging');
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('text/plain', app.id);
+  });
+
+  card.addEventListener('dragend', () => {
+    card.classList.remove('dragging');
+    document.querySelectorAll('.board-col.drag-over').forEach(column => column.classList.remove('drag-over'));
+    window.setTimeout(() => { wasDragged = false; }, 0);
+  });
+
+  const openEditor = async () => {
+    if (wasDragged) return;
+    try {
+      const response = await api.getApplication(app.id);
+      openApplicationEditor(applicationFromResponse(response), op);
+    } catch (err) {
+      alert(`Could not load application details: ${err.message}`);
+    }
+  };
+
+  card.addEventListener('click', openEditor);
+  card.addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openEditor();
+    }
+  });
   
   return card;
+}
+
+function setupApplicationBoardDragAndDrop() {
+  document.querySelectorAll('.board-col[data-status]').forEach(column => {
+    column.addEventListener('dragover', event => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      column.classList.add('drag-over');
+    });
+
+    column.addEventListener('dragleave', event => {
+      if (!column.contains(event.relatedTarget)) column.classList.remove('drag-over');
+    });
+
+    column.addEventListener('drop', async event => {
+      event.preventDefault();
+      column.classList.remove('drag-over');
+
+      const applicationId = event.dataTransfer.getData('text/plain');
+      const application = pipelineApplications.get(applicationId);
+      if (!application) return;
+
+      const nextStatus = chooseDroppedApplicationStatus(application.status, column.dataset.status);
+      if (!nextStatus || nextStatus === application.status) return;
+
+      if (!applicationTransitions[application.status]?.includes(nextStatus)) {
+        alert(`You cannot move an application directly from ${formatApplicationStatus(application.status)} to ${formatApplicationStatus(nextStatus)}. Follow the application stages in order.`);
+        return;
+      }
+
+      column.setAttribute('aria-busy', 'true');
+      try {
+        await api.updateApplication(applicationId, { status: nextStatus });
+        await loadApplicationsView();
+      } catch (err) {
+        alert(`Could not move application: ${err.message}`);
+        await loadApplicationsView();
+      } finally {
+        column.removeAttribute('aria-busy');
+      }
+    });
+  });
+}
+
+function chooseDroppedApplicationStatus(currentStatus, targetColumn) {
+  if (targetColumn === 'under_review') {
+    return ['under_review', 'shortlisted'].includes(currentStatus) ? currentStatus : 'under_review';
+  }
+
+  if (targetColumn !== 'decided') return targetColumn;
+
+  const allowedDecisions = ['accepted', 'rejected', 'withdrawn']
+    .filter(status => applicationTransitions[currentStatus]?.includes(status));
+  if (allowedDecisions.length === 0) return null;
+  if (allowedDecisions.length === 1) return allowedDecisions[0];
+
+  const selection = window.prompt(`Choose the decision status: ${allowedDecisions.join(', ')}`, allowedDecisions[0]);
+  if (!selection) return null;
+  const normalized = selection.trim().toLowerCase().replaceAll(' ', '_');
+  if (!allowedDecisions.includes(normalized)) {
+    alert(`Choose one of: ${allowedDecisions.join(', ')}.`);
+    return null;
+  }
+  return normalized;
+}
+
+function formatApplicationStatus(status) {
+  return status.replaceAll('_', ' ');
 }
 
 function getBadgeClassForStatus(status) {
@@ -1189,8 +1558,8 @@ function renderChecklist(app) {
       
       try {
         const res = await api.updateApplicationChecklist(app.id, updatedChecklist);
-        activeEditingApplication = res.data;
-        renderChecklist(res.data);
+        activeEditingApplication = applicationFromResponse(res);
+        renderChecklist(activeEditingApplication);
         loadApplicationsView();
       } catch (err) {
         e.target.checked = !isChecked; // revert
@@ -1321,8 +1690,20 @@ function setupAiHubHandling() {
   const btnMatching = document.getElementById('btn-run-matching');
   const cvForm = document.getElementById('cv-analysis-form');
   const btnCancelCv = document.getElementById('btn-cancel-cv');
+  const cvDocumentInput = document.getElementById('cv-document-input');
+  const loadPrivateCvButton = document.getElementById('btn-load-private-cv');
+  const cvTextInput = document.getElementById('cv-text-input');
   
   let cvAbortController = null;
+
+  cvDocumentInput.addEventListener('change', async () => {
+    const file = cvDocumentInput.files?.[0];
+    if (file) await extractCvIntoEditor(file, file.name);
+  });
+
+  loadPrivateCvButton.addEventListener('click', loadSelectedPrivateCv);
+  cvTextInput.addEventListener('input', updateCvTextCount);
+  updateCvTextCount();
   
   // Optional client cancellation
   btnCancelCv.addEventListener('click', () => {
@@ -1361,7 +1742,7 @@ function setupAiHubHandling() {
       const opResults = await Promise.all(opPromises);
       
       matches.forEach((match, idx) => {
-        const op = opResults[idx].data;
+        const op = opportunityFromResponse(opResults[idx]);
         const card = createMatchResultCard(match, op);
         resultsContainer.appendChild(card);
       });
@@ -1487,9 +1868,14 @@ function createMatchResultCard(match, op) {
 
 function renderCvAnalysisResult(analysis) {
   const resultBlock = document.getElementById('ai-cv-result');
+  const coverage = analysis.inputCoverage;
+  const coverageNotice = coverage?.mode === 'representative_excerpt'
+    ? `<div class="alert alert-warning" style="margin-top: 14px;"><i class="fa-solid fa-circle-info"></i><div><strong>Quick local analysis:</strong> Reviewed a representative ${coverage.analyzedCharacters.toLocaleString()}-character excerpt from ${coverage.originalCharacters.toLocaleString()} characters. Review the complete CV manually before applying.</div></div>`
+    : `<div class="alert alert-info" style="margin-top: 14px;"><i class="fa-solid fa-shield-halved"></i><div>The full non-contact CV text was reviewed locally. Contact details were removed before generation.</div></div>`;
   
   resultBlock.innerHTML = `
     <h4 style="color: var(--secondary); margin-bottom: 8px;"><i class="fa-solid fa-file-invoice"></i> CV Analysis Result (${analysis.analysisScope})</h4>
+    ${coverageNotice}
     
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 16px;">
       <div class="ai-analysis-list strengths" style="font-size: 0.8rem;">
@@ -1554,6 +1940,88 @@ async function loadAiHubView() {
       });
     }
   } catch (e) {}
+
+  await loadPrivateCvOptions();
+}
+
+async function extractCvIntoEditor(file, filename) {
+  const status = document.getElementById('cv-document-status');
+  const cvTextInput = document.getElementById('cv-text-input');
+  const submitButton = document.getElementById('btn-submit-cv');
+  status.textContent = `Reading ${filename} locally...`;
+  status.className = 'cv-document-status text-subtle';
+  submitButton.disabled = true;
+
+  try {
+    const text = await extractCvDocumentText(file, filename);
+    cvTextInput.value = text;
+    updateCvTextCount();
+    status.textContent = `Loaded ${filename}. Review the extracted text before running analysis.`;
+    status.className = 'cv-document-status text-success';
+    cvTextInput.focus();
+  } catch (error) {
+    status.textContent = error.message || 'The CV could not be read.';
+    status.className = 'cv-document-status text-error';
+  } finally {
+    submitButton.disabled = false;
+  }
+}
+
+async function loadPrivateCvOptions() {
+  const select = document.getElementById('cv-private-document-select');
+  const loadButton = document.getElementById('btn-load-private-cv');
+  select.replaceChildren(new Option('Select an uploaded CV...', ''));
+  loadButton.disabled = true;
+
+  const supabase = getSupabase();
+  if (!supabase || !currentUserId) return;
+
+  const { data, error } = await supabase.storage
+    .from('profile-documents')
+    .list(currentUserId, { limit: 25, sortBy: { column: 'created_at', order: 'desc' } });
+  if (error) return;
+
+  data.filter(item => isSupportedCvDocument(item.name)).forEach(item => {
+    const displayName = item.name.includes('--') ? item.name.split('--').slice(1).join('--') : item.name;
+    select.appendChild(new Option(displayName, item.name));
+  });
+  loadButton.disabled = select.options.length === 1;
+}
+
+async function loadSelectedPrivateCv() {
+  const select = document.getElementById('cv-private-document-select');
+  const objectName = select.value;
+  if (!objectName) return;
+
+  const status = document.getElementById('cv-document-status');
+  const supabase = getSupabase();
+  if (!supabase || !currentUserId) {
+    status.textContent = 'Sign in before loading a private document.';
+    status.className = 'cv-document-status text-error';
+    return;
+  }
+
+  status.textContent = 'Downloading your private document securely...';
+  status.className = 'cv-document-status text-subtle';
+  const { data: file, error } = await supabase.storage
+    .from('profile-documents')
+    .download(`${currentUserId}/${objectName}`);
+  if (error) {
+    status.textContent = `Could not load the private document: ${error.message}`;
+    status.className = 'cv-document-status text-error';
+    return;
+  }
+
+  const displayName = select.options[select.selectedIndex].textContent;
+  await extractCvIntoEditor(file, displayName);
+}
+
+function updateCvTextCount() {
+  const input = document.getElementById('cv-text-input');
+  const count = document.getElementById('cv-text-count');
+  const length = input.value.length;
+  count.textContent = `${length.toLocaleString()} / ${CV_TEXT_MAX_LENGTH.toLocaleString()}`;
+  count.classList.toggle('text-error', length >= CV_TEXT_MAX_LENGTH);
 }
 
 /* =============================================================================
@@ -1571,11 +2039,11 @@ async function loadDashboardView() {
     await loadProfileData();
     
     // 2. Metrics counting
-    const savedRes = await api.getSavedOpportunities();
-    const savedCount = savedRes?.data?.length || 0;
+    const savedRes = await api.getSavedOpportunities({ page: 1, limit: 50 });
+    const savedCount = savedRes?.meta?.total ?? savedRes?.data?.length ?? 0;
     document.getElementById('dash-saved-count').textContent = savedCount;
     
-    const trackersRes = await api.getApplications();
+    const trackersRes = await api.getApplications({ page: 1, limit: 50 });
     const activeTrackers = (trackersRes?.data || []).filter(app => 
       !['accepted', 'rejected', 'withdrawn'].includes(app.status)
     ).length;
@@ -1590,12 +2058,23 @@ async function loadDashboardView() {
     const futureDeadlines = [];
     
     if (trackersRes.data && trackersRes.data.length > 0) {
-      // Load opportunities detailed context for all active trackers to gather deadlines
-      const opPromises = trackersRes.data.map(app => api.getOpportunity(app.opportunityId));
-      const opResults = await Promise.all(opPromises);
-      
-      trackersRes.data.forEach((app, idx) => {
-        const op = opResults[idx].data;
+      // List responses intentionally omit checklist details; load each owned
+      // tracker before building the pending-step dashboard.
+      const detailedApplications = await Promise.all(trackersRes.data.map(async summary => {
+        try {
+          return applicationFromResponse(await api.getApplication(summary.id));
+        } catch {
+          return summary;
+        }
+      }));
+
+      detailedApplications.forEach(app => {
+        const op = {
+          id: app.opportunityId,
+          title: app.opportunityTitle || 'Opportunity unavailable',
+          organization: app.organization || 'Organization unavailable',
+          deadline: app.deadline
+        };
         
         // Checklist gathering
         const pending = (app.checklist || []).filter(item => !item.completed);

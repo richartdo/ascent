@@ -138,6 +138,8 @@ Generation does not probe Ollama during startup. If generation is disabled, Olla
 
 Qwen is a small, pretrained, English-first model. Its output requires human review and is not proven real-world accuracy. In the hackathon scope only summaries, readiness explanations, and CV analysis are enabled. Cover-letter and essay quality was insufficient, so those features remain excluded from the public Express allowlist and the recommended local generation allowlist.
 
+Long CVs use a deterministic quick-local-analysis excerpt capped at 450 characters. Contact details are removed first, general analysis prioritizes profile, skills, experience, education, projects and achievements, and opportunity-specific analysis additionally prioritizes terms from the server-loaded opportunity. Responses disclose original and analyzed character counts; the service never claims that an excerpt represents a complete CV review.
+
 `GENERATION_ENABLED` is the global switch. When it is `false`, every generation endpoint is unavailable regardless of the allowlist. When it is `true`, only features listed in `GENERATION_FEATURES` are available. Supported names are:
 
 ```text

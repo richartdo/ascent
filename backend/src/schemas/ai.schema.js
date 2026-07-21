@@ -120,6 +120,14 @@ export const cvAnalysisResultSchema = rejectOutcomeGuarantees(z
     gaps: boundedList(12),
     suggestions: boundedList(12),
     missingInformation: boundedList(12),
+    inputCoverage: z.object({
+      mode: z.enum(["full", "representative_excerpt"]),
+      originalCharacters: z.number().int().min(1).max(20_000),
+      analyzedCharacters: z.number().int().min(1).max(20_000),
+    }).strict().refine(
+      value => value.analyzedCharacters <= value.originalCharacters,
+      { message: "Analyzed characters cannot exceed the original input." },
+    ),
     disclaimer: z.literal(CV_DISCLAIMER),
   })
   .strict());

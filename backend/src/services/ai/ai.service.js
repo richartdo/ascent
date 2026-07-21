@@ -164,6 +164,7 @@ export const createAiService = ({
         gaps: generated.gaps,
         suggestions: generated.suggestions,
         missingInformation: generated.missingInformation,
+        inputCoverage: generated.inputCoverage,
         disclaimer: CV_DISCLAIMER,
       });
     } catch (error) { throw normalizeAiProviderError(error); }

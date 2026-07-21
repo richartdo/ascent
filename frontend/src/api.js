@@ -12,27 +12,79 @@ export function saveApiBaseUrl(url) {
   }
 }
 
+const TOKEN_REFRESH_WINDOW_SECONDS = 60;
+let sessionExpiryNotified = false;
+
+function notifySessionExpired() {
+  if (sessionExpiryNotified) return;
+  sessionExpiryNotified = true;
+  window.dispatchEvent(new CustomEvent('ascent:session-expired'));
+}
+
+async function clearInvalidLocalSession(supabase) {
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch {
+    // The UI must still leave its authenticated state if local cleanup fails.
+  }
+  notifySessionExpired();
+}
+
+async function getAccessToken(supabase, forceRefresh = false) {
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session) return null;
+
+  const expiresSoon = Number.isFinite(data.session.expires_at)
+    && data.session.expires_at <= Math.floor(Date.now() / 1000) + TOKEN_REFRESH_WINDOW_SECONDS;
+
+  if (forceRefresh || expiresSoon) {
+    const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+    if (refreshError || !refreshed.session?.access_token) {
+      await clearInvalidLocalSession(supabase);
+      return null;
+    }
+    sessionExpiryNotified = false;
+    return refreshed.session.access_token;
+  }
+
+  sessionExpiryNotified = false;
+  return data.session.access_token;
+}
+
 async function request(path, options = {}) {
   const baseUrl = getApiBaseUrl();
   const url = `${baseUrl}${path}`;
+  const supabase = getSupabase();
 
-  const headers = {
-    'Content-Type': 'application/json',
-    ...options.headers,
+  const send = async (forceRefresh = false) => {
+    const headers = {
+      'Content-Type': 'application/json',
+      ...options.headers,
+    };
+
+    if (supabase) {
+      const accessToken = await getAccessToken(supabase, forceRefresh);
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
+    }
+
+    return fetch(url, {
+      ...options,
+      headers,
+    });
   };
 
-  const supabase = getSupabase();
-  if (supabase) {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.access_token) {
-      headers['Authorization'] = `Bearer ${session.access_token}`;
+  let res = await send();
+
+  // A token can expire between getSession() and backend verification. Refresh
+  // and replay the same API operation once; never enter an unbounded retry loop.
+  if (res.status === 401 && supabase) {
+    res = await send(true);
+    if (res.status === 401) {
+      await clearInvalidLocalSession(supabase);
     }
   }
-
-  const res = await fetch(url, {
-    ...options,
-    headers,
-  });
 
   if (res.status === 204) {
     return { data: null };

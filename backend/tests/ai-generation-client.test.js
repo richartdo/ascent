@@ -19,7 +19,7 @@ const server = {
 const outputs = {
   summary: { data: { ...server, overview: "A fictional fellowship.", eligibilityHighlights: [], benefits: ["Mentorship"], deadlineNotes: "Deadline is supplied.", missingInformation: [], disclaimer: "This summary is AI-assisted guidance; verify every detail with the official opportunity source." }, requestId },
   readiness: { data: { ...server, readinessAssessment: "The supplied profile has relevant evidence.", strengths: ["JavaScript is listed."], gaps: [], nextActions: ["Review the official criteria."], disclaimer: "This readiness explanation is guidance, not a guarantee of eligibility, selection, funding, or success." }, requestId },
-  cv: { data: { ...server, strengths: ["Lists JavaScript."], relevantEvidence: ["Built a fictional project."], gaps: [], suggestions: ["Add measurable context if truthful."], missingInformation: [], disclaimer: "This CV analysis requires human review and does not guarantee employment or application success." }, requestId },
+  cv: { data: { ...server, strengths: ["Lists JavaScript."], relevantEvidence: ["Built a fictional project."], gaps: [], suggestions: ["Add measurable context if truthful."], missingInformation: [], inputCoverage: { mode: "full", originalCharacters: 57, analyzedCharacters: 57 }, disclaimer: "This CV analysis requires human review and does not guarantee employment or application success." }, requestId },
 };
 const response = (body, status = 200) => ({ ok: status >= 200 && status < 300, status, json: vi.fn().mockResolvedValue(body) });
 const clientFor = (fetchImpl) => createModelServiceClient({

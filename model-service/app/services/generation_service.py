@@ -16,6 +16,7 @@ from app.generation_schemas import (
     CoverLetterModelOutput,
     CoverLetterRequest,
     CvAnalysisData,
+    CvInputCoverage,
     CvAnalysisModelOutput,
     CvAnalysisRequest,
     DISCLAIMERS,
@@ -43,6 +44,7 @@ from app.services.ollama_client import (
     MalformedModelResponseError,
     OllamaClient,
 )
+from app.services.cv_preprocessor import prepare_cv_text
 
 
 InputModel = TypeVar("InputModel", bound=BaseModel)
@@ -86,7 +88,7 @@ FEATURES = {
         CvAnalysisModelOutput,
         CvAnalysisData,
         cv_analysis_prompt,
-        650,
+        240,
     ),
     "cover-letter": FeatureDefinition(
         "cover_letter",
@@ -170,6 +172,7 @@ class GenerationService:
         feature: str,
         payload: BaseModel,
         request_id: str,
+        extra_server_fields: dict[str, Any] | None = None,
     ) -> BaseModel:
         definition = FEATURES[feature]
         if (
@@ -232,6 +235,8 @@ class GenerationService:
                 "disclaimer": DISCLAIMERS[feature],
                 "modelMetadata": ModelMetadata(name=self._model_name),
             }
+            if extra_server_fields:
+                server_fields.update(extra_server_fields)
             if isinstance(payload, EssayAssistanceRequest):
                 server_fields["mode"] = payload.mode
             return definition.data_schema.model_validate(server_fields)
@@ -285,8 +290,27 @@ class GenerationService:
     async def cv_analysis(
         self, payload: CvAnalysisRequest, request_id: str
     ) -> CvAnalysisData:
+        original_serialized = json.dumps(
+            payload.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(original_serialized) > self._max_input_chars:
+            raise ServiceError(422, "VALIDATION_ERROR", "The request data is invalid.")
+        opportunity = payload.opportunity.model_dump(mode="json") if payload.opportunity else None
+        prepared = prepare_cv_text(payload.cvText, opportunity)
+        generation_payload = payload.model_copy(update={"cvText": prepared.text})
         return await self._generate(
-            feature="cv-analysis", payload=payload, request_id=request_id
+            feature="cv-analysis",
+            payload=generation_payload,
+            request_id=request_id,
+            extra_server_fields={
+                "inputCoverage": CvInputCoverage(
+                    mode=prepared.mode,
+                    originalCharacters=prepared.original_characters,
+                    analyzedCharacters=prepared.analyzed_characters,
+                )
+            },
         )
 
     async def cover_letter(

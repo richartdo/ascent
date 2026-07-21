@@ -57,6 +57,7 @@ class OllamaClient:
     ) -> str:
         payload = {
             "model": self._model,
+            "think": False,
             "system": system,
             "prompt": prompt,
             "stream": False,

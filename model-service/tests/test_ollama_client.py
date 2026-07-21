@@ -61,6 +61,7 @@ def test_client_uses_hardcoded_path_and_safe_structured_options(settings_factory
     assert captured["request_id"] == "00000000-0000-4000-8000-000000000001"
     assert captured["body"]["model"] == "smollm2:1.7b"
     assert captured["body"]["stream"] is False
+    assert captured["body"]["think"] is False
     assert captured["body"]["options"] == {"temperature": 0, "num_predict": 350}
     assert "disclaimer" not in json.dumps(captured["body"]["format"]).lower()
 

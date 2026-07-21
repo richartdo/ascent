@@ -498,7 +498,7 @@ def test_feature_and_mode_specific_output_token_limits(settings_factory):
             assert client.post("/v1/generate/essay-assistance", json=payload).status_code == 200
 
     first_feature_tokens = [call["output_tokens"] for call in fake.calls[:5]]
-    assert first_feature_tokens == [350, 400, 650, 500, 400]
+    assert first_feature_tokens == [350, 400, 240, 500, 400]
     assert [call["output_tokens"] for call in fake.calls[5:]] == [300, 350, 400, 500]
 
 

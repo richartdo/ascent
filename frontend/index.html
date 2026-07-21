@@ -203,12 +203,60 @@
         <!-- View: Profile -->
         <section id="view-profile" class="content-pane">
           <div class="glass-panel" style="padding: 40px; max-width: 800px;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
+            <div class="profile-header">
               <div>
                 <h2>Your Profile details</h2>
                 <p class="text-muted">Profile info is evaluated by the AI matcher and readiness score engines.</p>
               </div>
-              <div class="settings-indicator" id="profile-completeness-badge">Completeness: 0%</div>
+              <div class="profile-header-actions">
+                <div class="settings-indicator" id="profile-completeness-badge">Completeness: 0%</div>
+                <button type="button" id="btn-edit-profile" class="btn btn-secondary" style="display: none;"><i class="fa-solid fa-pen"></i> Edit Profile</button>
+                <button type="button" id="btn-cancel-profile-edit" class="btn btn-secondary" style="display: none;">Cancel</button>
+              </div>
+            </div>
+
+            <div id="profile-summary" style="display: none;">
+              <div id="profile-view-success-alert" class="alert alert-success" style="display: none; margin-bottom: 20px;">
+                <i class="fa-solid fa-circle-check"></i> Profile updated successfully.
+              </div>
+
+              <div class="profile-identity">
+                <div class="profile-avatar"><i class="fa-solid fa-user"></i></div>
+                <div>
+                  <h2 id="profile-view-name">Name not provided</h2>
+                  <p class="text-muted"><span id="profile-view-persona">Persona not provided</span> · <span id="profile-view-location">Location not provided</span></p>
+                  <p class="text-subtle" id="profile-view-updated"></p>
+                </div>
+              </div>
+
+              <div class="profile-summary-grid">
+                <div class="profile-summary-item"><span>Education</span><strong id="profile-view-education">Not provided</strong></div>
+                <div class="profile-summary-item"><span>Institution</span><strong id="profile-view-institution">Not provided</strong></div>
+                <div class="profile-summary-item"><span>Field of study</span><strong id="profile-view-field">Not provided</strong></div>
+                <div class="profile-summary-item"><span>Graduation year</span><strong id="profile-view-graduation">Not provided</strong></div>
+                <div class="profile-summary-item"><span>Remote preference</span><strong id="profile-view-remote">Not provided</strong></div>
+              </div>
+
+              <div class="profile-summary-section">
+                <h4>Skills</h4>
+                <div class="profile-tags" id="profile-view-skills"></div>
+              </div>
+              <div class="profile-summary-section">
+                <h4>Interests</h4>
+                <div class="profile-tags" id="profile-view-interests"></div>
+              </div>
+              <div class="profile-summary-section">
+                <h4>Career goals</h4>
+                <p class="profile-career-copy" id="profile-view-career"></p>
+              </div>
+              <div class="profile-summary-section">
+                <h4>Preferred opportunity types</h4>
+                <div class="profile-tags" id="profile-view-types"></div>
+              </div>
+              <div class="profile-summary-section">
+                <h4>Preferred locations</h4>
+                <div class="profile-tags" id="profile-view-locations"></div>
+              </div>
             </div>
             
             <form id="profile-form">
@@ -319,6 +367,21 @@
                 <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Profile Details</button>
               </div>
             </form>
+
+            <section class="profile-documents-section" aria-labelledby="profile-documents-heading">
+              <div>
+                <h3 id="profile-documents-heading"><i class="fa-solid fa-file-shield text-secondary"></i> Private Documents</h3>
+                <p class="text-muted">Upload PDF, DOC, or DOCX files up to 5 MB. Files are private to your account and are not sent to the AI service.</p>
+              </div>
+              <form id="profile-document-form" class="profile-document-upload">
+                <input id="profile-document-input" class="form-control" type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" required />
+                <button type="submit" class="btn btn-secondary"><i class="fa-solid fa-upload"></i> Upload</button>
+              </form>
+              <p id="profile-document-status" class="text-subtle" aria-live="polite"></p>
+              <div id="profile-documents-list" class="profile-documents-list">
+                <p class="text-subtle">No documents uploaded yet.</p>
+              </div>
+            </section>
           </div>
         </section>
 
@@ -392,6 +455,7 @@
             <div>
               <h2>Application pipeline</h2>
               <p class="text-muted">Track milestones, checklist criteria, status transitions, and notes.</p>
+              <p class="text-subtle pipeline-help"><i class="fa-solid fa-grip-vertical"></i> Drag a card to an allowed stage. Drop in Decisions to choose accepted, rejected, or withdrawn.</p>
             </div>
           </div>
           
@@ -475,9 +539,32 @@
               <!-- Card 2: CV Analysis -->
               <div class="glass-panel ai-card">
                 <h3><i class="fa-solid fa-file-invoice text-secondary"></i> CV Analysis & Relevance Builder</h3>
-                <p class="text-muted" style="font-size: 0.85rem; margin-top: 6px; margin-bottom: 20px;">Paste your CV text to assess strengths, gaps, and receive suggestions for refinement. Optionally target a specific opportunity to check relevance.</p>
+                <p class="text-muted" style="font-size: 0.85rem; margin-top: 6px; margin-bottom: 20px;">Upload a CV or select one of your private documents. Its text is extracted locally for your review before analysis. You can optionally target a specific opportunity.</p>
                 
                 <form id="cv-analysis-form">
+                  <div class="cv-document-picker">
+                    <div class="form-group">
+                      <label class="form-label" for="cv-document-input">Upload CV</label>
+                      <input id="cv-document-input" class="form-control" type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain">
+                      <small class="text-subtle">PDF, DOCX, or TXT, up to 5 MB. The document is processed in your browser and is not automatically stored.</small>
+                    </div>
+
+                    <div class="cv-picker-divider" aria-hidden="true"><span>or</span></div>
+
+                    <div class="form-group">
+                      <label class="form-label" for="cv-private-document-select">Use a private document</label>
+                      <div class="cv-private-document-controls">
+                        <select id="cv-private-document-select" class="form-control">
+                          <option value="">Select an uploaded CV...</option>
+                        </select>
+                        <button id="btn-load-private-cv" type="button" class="btn btn-secondary">Load</button>
+                      </div>
+                      <small class="text-subtle">Only your supported private documents are listed.</small>
+                    </div>
+                  </div>
+
+                  <div id="cv-document-status" class="cv-document-status text-subtle" role="status" aria-live="polite">Choose a document or paste CV text below.</div>
+
                   <div class="form-group">
                     <label class="form-label" for="cv-opportunity-select">Target Opportunity (Optional)</label>
                     <select id="cv-opportunity-select" class="form-control">
@@ -487,13 +574,17 @@
                   </div>
 
                   <div class="form-group">
-                    <label class="form-label" for="cv-text-input">Paste CV Plaintext</label>
-                    <textarea id="cv-text-input" class="form-control" style="height: 200px; resize: vertical;" placeholder="Paste CV content here (skills, experiences, achievements)..." required></textarea>
+                    <div class="cv-text-label-row">
+                      <label class="form-label" for="cv-text-input">Review extracted text or paste CV text</label>
+                      <span id="cv-text-count" class="text-subtle">0 / 20,000</span>
+                    </div>
+                    <textarea id="cv-text-input" class="form-control" style="height: 200px; resize: vertical;" maxlength="20000" placeholder="Extracted CV text will appear here, or paste it manually..." required></textarea>
+                    <small class="text-subtle">For reliable private CPU inference, long CVs use a representative excerpt selected from profile, skills, experience, education, projects and opportunity-relevant evidence. Contact details are removed before local generation.</small>
                   </div>
 
                   <div id="ai-cv-loading" class="loading-overlay" style="display: none; padding: 20px;">
                     <div class="spinner"></div>
-                    <p class="text-muted" style="font-size: 0.85rem;">Analyzing CV structure with local private LLM (can take up to 30-45 seconds)...</p>
+                    <p class="text-muted" style="font-size: 0.85rem;">Analyzing CV structure with the local private model (longer CVs can take up to two minutes on CPU)...</p>
                     <button id="btn-cancel-cv" type="button" class="btn btn-secondary btn-link" style="font-size: 0.8rem;">Cancel request</button>
                   </div>
 

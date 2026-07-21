@@ -200,19 +200,19 @@ class ReadinessModelOutput(SafeModelOutput):
 
 class CvAnalysisModelOutput(SafeModelOutput):
     strengths: list[ShortText] = Field(
-        max_length=12, description="Narrow strengths supported literally by supplied CV text, without generalized proficiency"
+        max_length=2, description="Up to two prioritized strengths supported literally by supplied CV text, without generalized proficiency"
     )
     relevantEvidence: list[ShortText] = Field(
-        max_length=12, description="Direct evidence stated in supplied CV text"
+        max_length=2, description="Up to two prioritized pieces of direct evidence stated in supplied CV text"
     )
     gaps: list[ShortText] = Field(
-        max_length=12, description="Relevant evidence absent or weak in supplied CV text"
+        max_length=2, description="Up to two prioritized areas where relevant evidence is absent or weak in supplied CV text"
     )
     suggestions: list[ShortText] = Field(
-        max_length=12, description="Truthful improvements without invented applicant facts"
+        max_length=2, description="Up to two prioritized, truthful improvements without invented applicant facts"
     )
     missingInformation: list[ShortText] = Field(
-        max_length=12, description="Applicant information that cannot be determined from CV text"
+        max_length=2, description="Up to two prioritized applicant details that cannot be determined from CV text"
     )
 
 
@@ -253,6 +253,12 @@ class ServerFields(StrictSchema):
     limitation: bounded_text(maximum=500) = PRETRAINED_LIMITATION
 
 
+class CvInputCoverage(StrictSchema):
+    mode: Literal["full", "representative_excerpt"]
+    originalCharacters: StrictInt = Field(ge=1, le=20_000)
+    analyzedCharacters: StrictInt = Field(ge=1, le=20_000)
+
+
 class OpportunitySummaryData(OpportunitySummaryModelOutput, ServerFields):
     pass
 
@@ -262,7 +268,7 @@ class ReadinessData(ReadinessModelOutput, ServerFields):
 
 
 class CvAnalysisData(CvAnalysisModelOutput, ServerFields):
-    pass
+    inputCoverage: CvInputCoverage
 
 
 class CoverLetterData(CoverLetterModelOutput, ServerFields):

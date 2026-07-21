@@ -51,6 +51,7 @@ const readinessOutput = {
 const cvOutput = {
   strengths: ["Lists JavaScript."], relevantEvidence: ["Built a fictional class project."], gaps: [],
   suggestions: ["Add measurable context when truthful."], missingInformation: ["Employment dates are not supplied."],
+  inputCoverage: { mode: "full", originalCharacters: 70, analyzedCharacters: 70 },
 };
 const createProvider = () => ({
   configured: true,
